@@ -64,6 +64,77 @@ class GrpcOAuthError(ValueError):
     """Sony Seeds OAuth redirect or token exchange failed."""
 
 
+class GrpcNotATvError(GrpcOAuthError):
+    """The selected Sony device is not a TV (e.g. a soundbar).
+
+    Sony soundbars (BRAVIA Theatre) advertise the same gRPC service and live on
+    the same account as the TV; they are handled by the separate bravia_quad
+    integration, so pairing one here is rejected.
+    """
+
+    def __init__(
+        self, device_type: str | None = None, model: str | None = None
+    ) -> None:
+        self.device_type = device_type
+        self.model = model
+        super().__init__(
+            f"Selected Sony device is not a TV (type={device_type!r}, model={model!r})"
+        )
+
+
+# Sony IoT device_type for a television (soundbars report "Speaker").
+TV_DEVICE_TYPE = "TV"
+
+
+def select_tv_device(
+    devices: list[dict[str, Any]],
+    *,
+    device_unique_id: str | None = None,
+    device_id: str | None = None,
+) -> dict[str, Any]:
+    """Pick the intended BRAVIA TV from a Sony account's device list.
+
+    A Sony account can hold several gRPC devices (a TV *and* a soundbar). Match
+    an explicit ``device_id`` (re-auth) or the discovered ``device_unique_id``
+    (zeroconf) first so the paired device is exactly the one the user is adding;
+    otherwise fall back to the single TV on the account.
+
+    Raises :class:`GrpcNotATvError` if the matched device is a non-TV (e.g. a
+    soundbar), and :class:`GrpcOAuthError` if there is no — or an ambiguous — TV.
+    """
+    if device_id:
+        match = next((d for d in devices if d.get("device_id") == device_id), None)
+        if match is not None:
+            return match
+    if device_unique_id:
+        wanted = device_unique_id.lower()
+        match = next(
+            (
+                d
+                for d in devices
+                if (d.get("attributes") or {}).get("device_unique_id", "").lower()
+                == wanted
+            ),
+            None,
+        )
+        if match is not None:
+            if match.get("device_type") != TV_DEVICE_TYPE:
+                raise GrpcNotATvError(
+                    match.get("device_type"),
+                    (match.get("device_infos") or {}).get("model_name"),
+                )
+            return match
+    tvs = [d for d in devices if d.get("device_type") == TV_DEVICE_TYPE]
+    if len(tvs) == 1:
+        return tvs[0]
+    if not tvs:
+        raise GrpcOAuthError("No BRAVIA TV was found on your Sony account.")
+    raise GrpcOAuthError(
+        "Multiple BRAVIA TVs are on your Sony account and the specific one "
+        "could not be identified (mDNS discovery may be blocked on your network)."
+    )
+
+
 def generate_pkce_pair() -> tuple[str, str]:
     """Generate PKCE code verifier and code challenge."""
     code_verifier = (
@@ -345,6 +416,7 @@ async def async_credentials_from_oauth(
     session: ClientSession,
     token_response: dict[str, Any],
     device_id: str | None = None,
+    device_unique_id: str | None = None,
 ) -> dict[str, Any]:
     """Fetch gRPC session keys for a Sony IoT device and build credentials."""
     access_token = token_response["access_token"]
@@ -355,7 +427,11 @@ async def async_credentials_from_oauth(
         if not devices:
             msg = "No devices returned from Sony Seeds IoT API"
             raise GrpcCredentialsRefreshError(msg)
-        resolved_device_id = devices[0]["device_id"]
+        # Select the TV the user is adding (never a soundbar on the same
+        # account); matches the discovered device by its unique id.
+        resolved_device_id = select_tv_device(
+            devices, device_unique_id=device_unique_id
+        )["device_id"]
     session_keys = await async_get_session_keys(
         session, resolved_device_id, access_token
     )
@@ -382,6 +458,7 @@ async def async_complete_oauth_flow(
     *,
     expected_state: str | None = None,
     device_id: str | None = None,
+    device_unique_id: str | None = None,
 ) -> dict[str, Any]:
     """Complete Sony OAuth and fetch gRPC session keys (async)."""
     token_response = await async_exchange_oauth_redirect(
@@ -391,7 +468,7 @@ async def async_complete_oauth_flow(
         expected_state=expected_state,
     )
     return await async_credentials_from_oauth(
-        session, token_response, device_id=device_id
+        session, token_response, device_id=device_id, device_unique_id=device_unique_id
     )
 
 

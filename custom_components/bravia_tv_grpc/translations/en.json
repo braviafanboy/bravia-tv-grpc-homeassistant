@@ -24,7 +24,8 @@
     "abort": {
       "already_configured": "This TV is already configured.",
       "reauth_successful": "Successfully re-authenticated with Sony.",
-      "wrong_account": "Those credentials are for a different TV. Sign in with the Sony account paired to this TV."
+      "wrong_account": "Those credentials are for a different TV. Sign in with the Sony account paired to this TV.",
+      "not_a_tv": "That device is a Sony soundbar, not a TV. This integration controls BRAVIA TVs; use the Bravia Theatre (bravia_quad) integration for the soundbar."
     }
   },
   "options": {

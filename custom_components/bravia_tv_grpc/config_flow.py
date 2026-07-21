@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+import re
 from typing import Any
 
 from homeassistant.config_entries import (
@@ -35,14 +36,40 @@ from .const import (
     DOMAIN,
 )
 from .grpc.credentials import (
+    GrpcNotATvError,
     GrpcOAuthError,
     async_complete_oauth_flow,
     credentials_to_json,
     start_oauth_login,
 )
-from .grpc_discovery import discover_grpc_port
+from .grpc_discovery import async_resolve_device_mdns, discover_grpc_port
 
 _LOGGER = logging.getLogger(__name__)
+
+# Sony advertises `<friendly name>-<40-hex device_unique_id>._sonysmarthome…`.
+_DEVICE_UID_RE = re.compile(r"-([0-9a-f]{40})", re.IGNORECASE)
+
+
+def _parse_mdns_name(name: str) -> tuple[str | None, str | None]:
+    """Return (friendly_name, device_unique_id) from an mDNS instance name."""
+    label = (name or "").split("._sonysmarthome")[0]
+    match = _DEVICE_UID_RE.search(label)
+    if match:
+        return label[: match.start()].strip(" -") or None, match.group(1).lower()
+    return (label or None), None
+
+
+def _is_soundbar_model(properties: dict[str, Any] | None) -> bool:
+    """Whether an mDNS advertisement is a Sony soundbar (BRAVIA Theatre).
+
+    Soundbars share the ``_sonysmarthome._tcp`` service and Sony account with the
+    TV but are handled by the bravia_quad integration. Their model (mDNS
+    ``imName``) is ``HT-*`` — a prefix no TV uses — so this never suppresses a
+    real TV; anything it misses is still caught after sign-in by the cloud
+    ``device_type`` check.
+    """
+    props = {str(k).lower(): v for k, v in (properties or {}).items()}
+    return str(props.get("imname") or "").upper().startswith("HT-")
 
 
 class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -63,6 +90,7 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
         self._state: str | None = None
         self._auth_url: str | None = None
         self._reauth_entry: ConfigEntry | None = None
+        self._device_unique_id: str | None = None
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
@@ -85,36 +113,56 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle a TV auto-discovered via mDNS (_sonysmarthome._tcp)."""
         host = discovery_info.host
+        # Don't even offer a soundbar (handled by bravia_quad) — it shares the
+        # service + account. The cloud device_type check after sign-in is the
+        # authoritative backstop for anything this model check can't see.
+        if _is_soundbar_model(discovery_info.properties):
+            return self.async_abort(reason="not_a_tv")
         for entry in self._async_current_entries():
             if entry.data.get(CONF_HOST) == host:
                 return self.async_abort(reason="already_configured")
         self._host = host
         self._port = discovery_info.port
+        # The soundbar advertises the same service on the same account; capture
+        # the device's unique id so pairing binds to the discovered device (and
+        # rejects a non-TV) instead of guessing.
+        friendly, self._device_unique_id = _parse_mdns_name(discovery_info.name)
         await self.async_set_unique_id(discovery_info.name)
         self._abort_if_unique_id_configured()
-        self.context["title_placeholders"] = {"name": f"Bravia TV ({host})"}
+        # Show the real device name so a TV and a soundbar are distinguishable.
+        self.context["title_placeholders"] = {"name": friendly or f"Bravia TV ({host})"}
         return await self.async_step_oauth()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Collect host and discover the gRPC control port."""
+        """Collect host, resolve the device, and discover the gRPC control port."""
         errors: dict[str, str] = {}
         if user_input is not None:
             self._host = user_input[CONF_HOST]
-            # The dynamic port has only been seen in the ephemeral range, so scan
-            # that first (about half the ports, half the time); fall back to full.
-            port = await self.hass.async_add_executor_job(
-                discover_grpc_port, self._host, (), range(32768, 61000)
-            )
-            if not port:
-                port = await self.hass.async_add_executor_job(
+            # Resolve the entered IP to its exact Sony device via mDNS first: this
+            # yields the port AND the device's unique id, so an account with more
+            # than one TV pairs the right one and a soundbar is rejected up front.
+            resolved = await async_resolve_device_mdns(self.hass, self._host)
+            if resolved is not None:
+                port, name, props = resolved
+                if _is_soundbar_model(props):
+                    return self.async_abort(reason="not_a_tv")
+                self._port = port
+                _, self._device_unique_id = _parse_mdns_name(name)
+            else:
+                # mDNS blocked: scan for the port. Without a unique id, device
+                # selection falls back to the single TV on the account.
+                # The dynamic port has only been seen in the ephemeral range, so
+                # scan that first (about half the ports); fall back to full.
+                self._port = await self.hass.async_add_executor_job(
+                    discover_grpc_port, self._host, (), range(32768, 61000)
+                ) or await self.hass.async_add_executor_job(
                     discover_grpc_port, self._host, (), range(1024, 65536)
                 )
-            if not port:
+            if not self._port:
                 errors["base"] = "no_grpc_service"
             else:
-                self._port = port
                 return await self.async_step_oauth()
 
         return self.async_show_form(
@@ -133,13 +181,24 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             session = async_get_clientsession(self.hass)
+            reauth_device_id = (
+                self._reauth_entry.data.get(CONF_GRPC_DEVICE_ID)
+                if self._reauth_entry is not None
+                else None
+            )
             try:
                 credentials = await async_complete_oauth_flow(
                     session,
                     user_input["redirect_url"],
                     self._code_verifier,
                     expected_state=self._state,
+                    device_id=reauth_device_id,
+                    device_unique_id=self._device_unique_id,
                 )
+            except GrpcNotATvError:
+                # The discovered device is a soundbar (or other non-TV) — that is
+                # the bravia_quad integration's job, not this one.
+                return self.async_abort(reason="not_a_tv")
             except GrpcOAuthError:
                 errors["base"] = "oauth_failed"
             except Exception:  # noqa: BLE001
