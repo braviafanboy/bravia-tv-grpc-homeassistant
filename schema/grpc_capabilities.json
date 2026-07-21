@@ -1,0 +1,1436 @@
+{
+  "capabilities": [
+    {
+      "name": "system_setting.application",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "power",
+      "type": "bool",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "system_setting.friendly_name",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "mute",
+      "type": "bool",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "volume",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set",
+          "plus"
+        ],
+        "min": 0,
+        "max": 100,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "system_setting.wifi_availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": false
+      }
+    },
+    {
+      "name": "system_setting.application_list",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true,
+        "security": {
+          "execcommand_request": "nonce",
+          "getstates_request": "nonce"
+        }
+      }
+    },
+    {
+      "name": "system_setting.available_inputs",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "system_setting.input",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "system_setting.multiview",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "system_setting.tvapp.input",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "system_setting.serial_number",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "hdmi_connected_device.sshinfo",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "min": -6,
+        "max": 6,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_audio_output",
+          "post_processor",
+          "multiview",
+          "auto_adjustment"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom.tv_speaker",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "min": -6,
+        "max": 6,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom.tv_speaker.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.voice_zoom.tv_speaker.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_audio_output",
+          "post_processor",
+          "multiview",
+          "auto_adjustment",
+          "multi_audio_output"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.audio_output.active_devices",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.audio_output.available_devices",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.audio_output.activate_devices",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "sound_setting.audio_output.deactivate_devices",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "sound_setting.audio_output.activation_result",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.bt_3d_surround",
+      "type": "bool",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.bt_3d_surround.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.bt_3d_surround.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_audio_output",
+          "unsupported_bluetooth_device",
+          "multiview",
+          "multi_audio_output",
+          "monaural_audio_output"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.tv_speaker",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set",
+          "plus"
+        ],
+        "min": 0,
+        "max": 100,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.tv_speaker.visibility",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.tv_speaker.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.tv_speaker.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.hdmi",
+      "type": "int",
+      "props": {
+        "commands": [
+          "plus"
+        ],
+        "min": 0,
+        "max": 100,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.hdmi.visibility",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.hdmi.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.hdmi.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "spdif",
+          "unsupported_hdmi"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.bluetooth",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set",
+          "plus"
+        ],
+        "min": 0,
+        "max": 100,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.bluetooth.visibility",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.bluetooth.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.bluetooth.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.bluetooth.device_info",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.wired_headphone",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set",
+          "plus"
+        ],
+        "min": 0,
+        "max": 100,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.wired_headphone.visibility",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.wired_headphone.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.wired_headphone.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.rear",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "min": -10,
+        "max": 10,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.rear.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.rear.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_audio_output",
+          "no_connection_history",
+          "no_speaker",
+          "protection"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.subwoofer",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "min": -10,
+        "max": 10,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.subwoofer.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "sound_setting.volume.subwoofer.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_audio_output",
+          "no_connection_history",
+          "no_speaker",
+          "protection"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "video",
+          "game",
+          "pc",
+          "multiView",
+          "movie"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode.available_values",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "multiview",
+          "unsupported_signal",
+          "allm",
+          "vrr",
+          "unsupported_input",
+          "calibrated",
+          "gallery"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode.prerequisites",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.content_mode.confirm_prerequisite",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "display_setting.brightness",
+      "type": "int",
+      "props": {
+        "commands": [
+          "set",
+          "plus"
+        ],
+        "min": 0,
+        "max": 50,
+        "span": 1,
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.brightness.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.brightness.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "picture_adjustment_lock",
+          "calibrated",
+          "powersaving_high",
+          "auto_adjustment",
+          "auto_power_saving"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.brightness.prerequisites",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.brightness.confirm_prerequisite",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "display_setting.picture_mode",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "standard",
+          "vivid",
+          "cinema",
+          "professional",
+          "photo",
+          "imax",
+          "custom",
+          "calm",
+          "calibrated",
+          "customForPro1",
+          "customForPro2",
+          "dolbyVisionVivid",
+          "dolbyVisionBright",
+          "dolbyVisionDark",
+          "multiViewStandard",
+          "multiViewVivid",
+          "multiViewCinema",
+          "photoApp",
+          "gameStandard",
+          "gameFps",
+          "gameRts",
+          "dolbyVisionGame",
+          "pcStandard",
+          "netflixCalibrated",
+          "dolbyNetflixCalibrated",
+          "galleryVideo",
+          "galleryPhoto",
+          "calmEyecareCN",
+          "movieFilmmakerExperienceCalibrated",
+          "movieFilmmakerExperienceNetflixCalibrated",
+          "movieFilmmakerExperienceDolbyNetflixCalibrated",
+          "movieFilmmakerExperienceProfessional",
+          "movieFilmmakerExperienceDolbyVisionDark",
+          "movieMovieNightStandard",
+          "movieMovieNightProfessional",
+          "movieMovieNightVivid",
+          "movieMovieNightImaxEnhanced",
+          "movieMovieNightDolbyVisionBright",
+          "movieMovieNightDolbyVisionDark",
+          "movieDaytimeStandard",
+          "movieDaytimeProfessional",
+          "movieDaytimeVivid",
+          "movieDaytimeImaxEnhanced",
+          "movieDaytimeDolbyVisionBright",
+          "movieDaytimeDolbyVisionDark",
+          "movieQuietStandard",
+          "movieQuietProfessional",
+          "movieQuietVivid",
+          "movieQuietImaxEnhanced",
+          "movieQuietDolbyVisionBright",
+          "movieQuietDolbyVisionDark",
+          "movieDialogueStandard",
+          "movieDialogueProfessional",
+          "movieDialogueVivid",
+          "movieDialogueImaxEnhanced",
+          "movieDialogueDolbyVisionBright",
+          "movieDialogueDolbyVisionDark",
+          "movieCustomStandard",
+          "movieCustomProfessional",
+          "movieCustomVivid",
+          "movieCustomImaxEnhanced",
+          "movieCustomDolbyVisionBright",
+          "movieCustomDolbyVisionDark"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.picture_mode.available_values",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.picture_mode.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.picture_mode.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "calibrated",
+          "standard_pc",
+          "photo_app",
+          "dolby_vision_game",
+          "gallery",
+          "movie_filmmaker_experience"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.picture_mode.prerequisites",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.picture_mode.confirm_prerequisite",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "display_setting.calibrated_picture_mode",
+      "type": "bool",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.calibrated_picture_mode.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.calibrated_picture_mode.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "unsupported_app",
+          "on_low_latency_path"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.calibrated_picture_mode.prerequisites",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_setting.calibrated_picture_mode.confirm_prerequisite",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "remote_key.d_pad",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "up",
+          "down",
+          "left",
+          "right",
+          "center",
+          "back",
+          "home"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "remote_key.shortcut",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "tv",
+          "guide",
+          "app_menu",
+          "menu",
+          "quick_settings",
+          "audio"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "remote_key.skip_channels",
+      "type": "int",
+      "props": {
+        "commands": [
+          "plus"
+        ],
+        "min": -1,
+        "max": 1,
+        "span": 1,
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "remote_key",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "playback_control.signal_info.audio",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "playback_control.signal_info.video",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "fw_update.update_exist",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "fw_update.start_update_availability",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "available",
+          "update_ongoing",
+          "wait_for_reboot",
+          "merging"
+        ],
+        "get": true,
+        "notify": false
+      }
+    },
+    {
+      "name": "fw_update.info",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "fw_update.start_update",
+      "type": "void",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "remote_start",
+      "type": "bool",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "remote_start.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "energy_mode_not_optimized",
+          "energy_mode_not_increased"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "filmmakerExperience",
+          "daytime",
+          "movieNight",
+          "quiet",
+          "dialogueFun",
+          "custom",
+          "off"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.available_values",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.availability",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.unavailable_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "non_movie_app",
+          "restricted_content_mode"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.prerequisites",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.confirm_prerequisite",
+      "type": "enum",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "values": [
+          "lot5Agreement"
+        ],
+        "get": false,
+        "notify": false
+      }
+    },
+    {
+      "name": "display_and_sound_setting.theatre_mode.limitation_reason",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "none",
+          "by_connected_devices",
+          "by_audio_system",
+          "by_bluetooth_device",
+          "by_wired_headphone",
+          "by_option_speaker",
+          "due_to_multiple_outputs",
+          "due_to_post_processing_setting",
+          "due_to_voice_emphasis_setting",
+          "due_to_mono_audio_setting"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "opspk.generic_command_in_use",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "opspk.setup",
+      "type": "any",
+      "props": {
+        "commands": [
+          "set"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.sw",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.rl",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.rr",
+      "type": "bool",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.modelname.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.modelname.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_history.modelname.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_status.sw",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "disconnected",
+          "connected",
+          "protected"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_status.rl",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "disconnected",
+          "connected",
+          "protected"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.connection_status.rr",
+      "type": "enum",
+      "props": {
+        "commands": [],
+        "values": [
+          "disconnected",
+          "connected",
+          "protected"
+        ],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.identified_modelname.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.identified_modelname.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.identified_modelname.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.modelname.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.modelname.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.modelname.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.serial_number.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.serial_number.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.serial_number.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.version.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.version.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.version.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.wifi_mac_address.sw",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.wifi_mac_address.rl",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "speaker_connection_setting.wifi_mac_address.rr",
+      "type": "any",
+      "props": {
+        "commands": [],
+        "get": true,
+        "notify": true
+      }
+    },
+    {
+      "name": "error_status",
+      "type": "enum-array",
+      "props": {
+        "commands": [],
+        "values": [
+          "no_error",
+          "protect_rear_left",
+          "protect_rear_right",
+          "protect_sw"
+        ],
+        "get": true,
+        "notify": true
+      }
+    }
+  ]
+}

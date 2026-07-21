@@ -1,0 +1,415 @@
+{
+ "device_id": "<redacted>",
+ "device_type": "TV",
+ "states": {
+  "states_id": "<redacted>",
+  "states_region": "eu-west-1"
+ },
+ "device_infos": {
+  "destination": "EU-T2S2",
+  "firmware_version": "114.602.080.1EUA",
+  "locale": "en_GB",
+  "manufacturer_name": "Sony",
+  "model_name": "BRAVIA 8 II",
+  "name": "BRAVIA 8 II",
+  "segment_name": "TM2",
+  "software_version": "4.1.4"
+ },
+ "capabilities": [
+  {
+   "name": "d_pad",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "up",
+     "down",
+     "left",
+     "right",
+     "back",
+     "center"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "sleep_timer",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "off",
+     "15min",
+     "30min",
+     "45min",
+     "60min",
+     "90min",
+     "120min"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "application",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "com.android.tv.settings",
+     "com.android.vending",
+     "com.google.android.youtube.tv",
+     "com.google.android.youtube.tvmusic",
+     "com.sony.dtv.osat.music.toast",
+     "com.sony.dtv.smartmediaapp",
+     "com.sony.dtv.timers",
+     "com.sony.dtv.tvlin",
+     "com.spocky.projengmenu",
+     "tv.twitch.android.app",
+     "com.amazon.amazonvideo.livingroom",
+     "com.google.android.play.games",
+     "com.netflix.ninja",
+     "com.sony.dtv.all4launcher",
+     "com.sony.dtv.calibrationmonitor",
+     "com.sony.dtv.ecodashboard",
+     "com.sony.dtv.iplayerlauncher",
+     "com.sony.dtv.itvlauncher",
+     "com.sony.dtv.livingfit",
+     "com.sony.dtv.my5launcher",
+     "com.sony.dtv.notificationcenter",
+     "com.sony.dtv.promos",
+     "com.sony.dtv.recapp",
+     "com.sony.dtv.seeds.iot",
+     "com.sony.dtv.smarthelp",
+     "com.sony.dtv.sonyselect",
+     "com.sony.dtv.soundslauncher",
+     "com.sonypicturescore",
+     "com.vewd.core.browser",
+     "com.youview.poa",
+     "com.apple.atve.sony.appletv",
+     "com.disney.disneyplus",
+     "com.kick.mobile",
+     "org.localsend.localsend_app"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "application.deep_link",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "brightness",
+   "type": "int",
+   "props": {
+    "commands": [
+     "set",
+     "plus"
+    ],
+    "min": 0,
+    "max": 50,
+    "span": 1,
+    "report": true
+   }
+  },
+  {
+   "name": "power",
+   "type": "bool",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "skip_channels",
+   "type": "int",
+   "props": {
+    "commands": [
+     "plus"
+    ],
+    "min": -1,
+    "max": 1,
+    "span": 1,
+    "report": false
+   }
+  },
+  {
+   "name": "channel",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "mute",
+   "type": "bool",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "volume",
+   "type": "int",
+   "props": {
+    "commands": [
+     "set",
+     "plus"
+    ],
+    "min": 0,
+    "max": 100,
+    "span": 1,
+    "report": true
+   }
+  },
+  {
+   "name": "focused_ui_element",
+   "type": "any",
+   "props": {
+    "commands": [],
+    "report": true
+   }
+  },
+  {
+   "name": "select_media",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "seek",
+   "type": "int",
+   "props": {
+    "commands": [
+     "set",
+     "plus"
+    ],
+    "min": -2147483648,
+    "max": 2147483647,
+    "span": 1,
+    "report": false
+   }
+  },
+  {
+   "name": "ui_elements",
+   "type": "any",
+   "props": {
+    "commands": [],
+    "report": true
+   }
+  },
+  {
+   "name": "playback",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "playing",
+     "paused",
+     "stopped",
+     "fast_forwarding",
+     "rewinding",
+     "previous",
+     "next",
+     "none"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "picture_mode",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "calibrated",
+     "calm",
+     "cinema",
+     "custom_for_pro1",
+     "custom_for_pro2",
+     "dolby_netflix_calibrated",
+     "dolby_vision_bright",
+     "dolby_vision_dark",
+     "dolby_vision_game",
+     "dolby_vision_vivid",
+     "fps_game",
+     "imax",
+     "photo",
+     "photo_app",
+     "professional",
+     "rts_game",
+     "standard",
+     "vivid",
+     "netflix_calibrated",
+     "standard_game"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "access_shortcut",
+   "type": "bool",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "speaker_type",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "tv",
+     "audio_system"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "gui_shortcut",
+   "type": "enum",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "values": [
+     "home",
+     "guide"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "picture",
+   "type": "bool",
+   "props": {
+    "commands": [
+     "set"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "search",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": false
+   }
+  },
+  {
+   "name": "input",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": true
+   }
+  },
+  {
+   "name": "ui_action",
+   "type": "any",
+   "props": {
+    "commands": [
+     "post"
+    ],
+    "report": false
+   }
+  }
+ ],
+ "attributes": {
+  "application_packages": {
+   "tv": "com.sony.dtv.tvlin"
+  },
+  "audio_output": {
+   "supported_device_types": [
+    "tv_speaker",
+    "hdmi",
+    "bluetooth"
+   ],
+   "supported_device_types_v2": [
+    "tv_speaker",
+    "hdmi",
+    "bluetooth",
+    "tv_option_speaker"
+   ]
+  },
+  "bundle_remote_info": {
+   "menu": {
+    "symbol": "text_menu_en"
+   }
+  },
+  "device_region": "GB",
+  "device_unique_id": "<redacted>",
+  "identified_model_name": "K-65XR8M2",
+  "interface_version": "10390",
+  "ip_communication_support": true,
+  "language": "en",
+  "model_number": "0x5100",
+  "package_region": "EU",
+  "product_code": "12701501",
+  "remote_key": {
+   "supported_actions": [
+    "press",
+    "release",
+    "press_and_release"
+   ],
+   "supported_keys": [
+    "dpad_up",
+    "dpad_down",
+    "dpad_left",
+    "dpad_right",
+    "dpad_center",
+    "home",
+    "back"
+   ],
+   "supported_keys_v2": [
+    "home",
+    "back",
+    "dpad_up",
+    "dpad_down",
+    "dpad_left",
+    "dpad_right",
+    "dpad_center",
+    "power",
+    "menu"
+   ]
+  }
+ },
+ "created_at": "2026-06-19T19:24:10Z",
+ "updated_at": "2026-07-08T13:41:45Z"
+}

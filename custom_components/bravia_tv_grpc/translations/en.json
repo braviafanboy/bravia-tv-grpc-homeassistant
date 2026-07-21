@@ -1,0 +1,167 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bravia TV (gRPC)",
+        "description": "Enter the IP address of your BRAVIA TV. The gRPC control port is discovered automatically.",
+        "data": {
+          "host": "IP address"
+        }
+      },
+      "oauth": {
+        "title": "Sign in to Sony",
+        "description": "1. **[Open the Sony sign-in page]({auth_url})** in a **desktop browser** (not the phone that has BRAVIA Connect) and log in with the Sony account paired to your TV.\n2. Sign-in redirects to an `ssh-app://signin?code=…` address; the page will look like it failed — that’s expected.\n3. Copy that full `ssh-app://…` address and paste it below. If the address bar doesn’t show it, open the browser’s DevTools (F12) → **Network** tab and copy the `Location` header of the last `302` request. Pasting just the `code=…` value also works.",
+        "data": {
+          "redirect_url": "Redirect URL"
+        }
+      }
+    },
+    "error": {
+      "no_grpc_service": "Could not find the gRPC control service on that host. Make sure the TV is on and reachable.",
+      "oauth_failed": "The Sony login redirect could not be validated. Try again.",
+      "pairing_failed": "Pairing failed while fetching device keys. See the logs for details."
+    },
+    "abort": {
+      "already_configured": "This TV is already configured.",
+      "reauth_successful": "Successfully re-authenticated with Sony.",
+      "wrong_account": "Those credentials are for a different TV. Sign in with the Sony account paired to this TV."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bravia TV options",
+        "description": "The gRPC control port is discovered automatically. Set it here only if discovery fails on your network and you know the TV's current port; 0 restores automatic discovery.",
+        "data": {
+          "grpc_port": "gRPC port (0 = automatic)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "power": {
+        "name": "Power"
+      },
+      "mute": {
+        "name": "Mute"
+      },
+      "bluetooth_3d_surround": {
+        "name": "Bluetooth 3D Surround"
+      },
+      "calibrated_picture_mode": {
+        "name": "Calibrated Picture Mode"
+      }
+    },
+    "number": {
+      "volume": {
+        "name": "Volume"
+      },
+      "brightness": {
+        "name": "Brightness"
+      },
+      "tv_speaker_volume": {
+        "name": "TV Speaker Volume"
+      },
+      "bluetooth_volume": {
+        "name": "Bluetooth Volume"
+      },
+      "voice_zoom": {
+        "name": "Voice Zoom"
+      },
+      "hdmi_output_volume": {
+        "name": "HDMI Output Volume"
+      },
+      "rear_speaker_volume": {
+        "name": "Rear Speaker Volume"
+      },
+      "subwoofer_volume": {
+        "name": "Subwoofer Volume"
+      }
+    },
+    "select": {
+      "picture_mode": {
+        "name": "Picture Mode"
+      },
+      "content_mode": {
+        "name": "Content Mode"
+      },
+      "theatre_mode": {
+        "name": "Theatre Mode"
+      },
+      "speakers": {
+        "name": "Speakers"
+      },
+      "bluetooth": {
+        "name": "Bluetooth"
+      }
+    },
+    "sensor": {
+      "video_signal": {
+        "name": "Video Signal"
+      },
+      "audio_signal": {
+        "name": "Audio Signal"
+      },
+      "app": {
+        "name": "App"
+      },
+      "app_list": {
+        "name": "App List"
+      },
+      "rear_left_speaker": {
+        "name": "Rear Left Speaker"
+      },
+      "rear_right_speaker": {
+        "name": "Rear Right Speaker"
+      },
+      "subwoofer": {
+        "name": "Subwoofer"
+      },
+      "restricted_controls": {
+        "name": "Restricted Controls"
+      },
+      "bluetooth_device": {
+        "name": "Bluetooth Device"
+      }
+    },
+    "binary_sensor": {
+      "wifi": {
+        "name": "Wi-Fi"
+      },
+      "multiview": {
+        "name": "Multiview"
+      },
+      "remote_start": {
+        "name": "Remote Start"
+      },
+      "error_status": {
+        "name": "Error Status"
+      },
+      "hdmi_device": {
+        "name": "HDMI Linked Device"
+      }
+    },
+    "text": {
+      "name": {
+        "name": "Name"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    },
+    "remote": {
+      "remote": {
+        "name": "Remote"
+      }
+    }
+  },
+  "issues": {
+    "grpc_port_unreachable": {
+      "title": "Bravia TV not reachable",
+      "description": "Home Assistant couldn't find the Sony gRPC control service on {host}. Make sure the TV is powered on and on the same network. If mDNS and port scanning are blocked on your network, set the port manually in the integration's options (Settings > Devices & Services > Bravia TV > Configure)."
+    }
+  }
+}

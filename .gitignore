@@ -1,0 +1,16 @@
+# Sony Seeds credentials & pairing state — NEVER commit these
+schema/.credentials.json
+schema/.pairing_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

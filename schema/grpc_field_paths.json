@@ -1,0 +1,934 @@
+{
+  "system_setting.application": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "power": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.friendly_name": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "mute": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "volume": {
+    "type": "int",
+    "min": 0,
+    "max": 100,
+    "values": null
+  },
+  "system_setting.wifi_availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.application_list": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.available_inputs": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.input": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.multiview": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.tvapp.input": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "system_setting.serial_number": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "hdmi_connected_device.sshinfo": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.voice_zoom": {
+    "type": "int",
+    "min": -6,
+    "max": 6,
+    "values": null
+  },
+  "sound_setting.voice_zoom.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.voice_zoom.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_audio_output",
+      "post_processor",
+      "multiview",
+      "auto_adjustment"
+    ]
+  },
+  "sound_setting.voice_zoom.tv_speaker": {
+    "type": "int",
+    "min": -6,
+    "max": 6,
+    "values": null
+  },
+  "sound_setting.voice_zoom.tv_speaker.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.voice_zoom.tv_speaker.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_audio_output",
+      "post_processor",
+      "multiview",
+      "auto_adjustment",
+      "multi_audio_output"
+    ]
+  },
+  "sound_setting.audio_output.active_devices": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.audio_output.available_devices": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.audio_output.activate_devices": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.audio_output.deactivate_devices": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.audio_output.activation_result": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.bt_3d_surround": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.bt_3d_surround.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.bt_3d_surround.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_audio_output",
+      "unsupported_bluetooth_device",
+      "multiview",
+      "multi_audio_output",
+      "monaural_audio_output"
+    ]
+  },
+  "sound_setting.volume.tv_speaker": {
+    "type": "int",
+    "min": 0,
+    "max": 100,
+    "values": null
+  },
+  "sound_setting.volume.tv_speaker.visibility": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.tv_speaker.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.tv_speaker.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none"
+    ]
+  },
+  "sound_setting.volume.hdmi": {
+    "type": "int",
+    "min": 0,
+    "max": 100,
+    "values": null
+  },
+  "sound_setting.volume.hdmi.visibility": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.hdmi.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.hdmi.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "spdif",
+      "unsupported_hdmi"
+    ]
+  },
+  "sound_setting.volume.bluetooth": {
+    "type": "int",
+    "min": 0,
+    "max": 100,
+    "values": null
+  },
+  "sound_setting.volume.bluetooth.visibility": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.bluetooth.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.bluetooth.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none"
+    ]
+  },
+  "sound_setting.volume.bluetooth.device_info": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.wired_headphone": {
+    "type": "int",
+    "min": 0,
+    "max": 100,
+    "values": null
+  },
+  "sound_setting.volume.wired_headphone.visibility": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.wired_headphone.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.wired_headphone.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none"
+    ]
+  },
+  "sound_setting.volume.rear": {
+    "type": "int",
+    "min": -10,
+    "max": 10,
+    "values": null
+  },
+  "sound_setting.volume.rear.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.rear.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_audio_output",
+      "no_connection_history",
+      "no_speaker",
+      "protection"
+    ]
+  },
+  "sound_setting.volume.subwoofer": {
+    "type": "int",
+    "min": -10,
+    "max": 10,
+    "values": null
+  },
+  "sound_setting.volume.subwoofer.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "sound_setting.volume.subwoofer.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_audio_output",
+      "no_connection_history",
+      "no_speaker",
+      "protection"
+    ]
+  },
+  "display_and_sound_setting.content_mode": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "video",
+      "game",
+      "pc",
+      "multiView",
+      "movie"
+    ]
+  },
+  "display_and_sound_setting.content_mode.available_values": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_and_sound_setting.content_mode.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_and_sound_setting.content_mode.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "multiview",
+      "unsupported_signal",
+      "allm",
+      "vrr",
+      "unsupported_input",
+      "calibrated",
+      "gallery"
+    ]
+  },
+  "display_and_sound_setting.content_mode.prerequisites": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_and_sound_setting.content_mode.confirm_prerequisite": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.brightness": {
+    "type": "int",
+    "min": 0,
+    "max": 50,
+    "values": null
+  },
+  "display_setting.brightness.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_setting.brightness.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "picture_adjustment_lock",
+      "calibrated",
+      "powersaving_high",
+      "auto_adjustment",
+      "auto_power_saving"
+    ]
+  },
+  "display_setting.brightness.prerequisites": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.brightness.confirm_prerequisite": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.picture_mode": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "standard",
+      "vivid",
+      "cinema",
+      "professional",
+      "photo",
+      "imax",
+      "custom",
+      "calm",
+      "calibrated",
+      "customForPro1",
+      "customForPro2",
+      "dolbyVisionVivid",
+      "dolbyVisionBright",
+      "dolbyVisionDark",
+      "multiViewStandard",
+      "multiViewVivid",
+      "multiViewCinema",
+      "photoApp",
+      "gameStandard",
+      "gameFps",
+      "gameRts",
+      "dolbyVisionGame",
+      "pcStandard",
+      "netflixCalibrated",
+      "dolbyNetflixCalibrated",
+      "galleryVideo",
+      "galleryPhoto",
+      "calmEyecareCN",
+      "movieFilmmakerExperienceCalibrated",
+      "movieFilmmakerExperienceNetflixCalibrated",
+      "movieFilmmakerExperienceDolbyNetflixCalibrated",
+      "movieFilmmakerExperienceProfessional",
+      "movieFilmmakerExperienceDolbyVisionDark",
+      "movieMovieNightStandard",
+      "movieMovieNightProfessional",
+      "movieMovieNightVivid",
+      "movieMovieNightImaxEnhanced",
+      "movieMovieNightDolbyVisionBright",
+      "movieMovieNightDolbyVisionDark",
+      "movieDaytimeStandard",
+      "movieDaytimeProfessional",
+      "movieDaytimeVivid",
+      "movieDaytimeImaxEnhanced",
+      "movieDaytimeDolbyVisionBright",
+      "movieDaytimeDolbyVisionDark",
+      "movieQuietStandard",
+      "movieQuietProfessional",
+      "movieQuietVivid",
+      "movieQuietImaxEnhanced",
+      "movieQuietDolbyVisionBright",
+      "movieQuietDolbyVisionDark",
+      "movieDialogueStandard",
+      "movieDialogueProfessional",
+      "movieDialogueVivid",
+      "movieDialogueImaxEnhanced",
+      "movieDialogueDolbyVisionBright",
+      "movieDialogueDolbyVisionDark",
+      "movieCustomStandard",
+      "movieCustomProfessional",
+      "movieCustomVivid",
+      "movieCustomImaxEnhanced",
+      "movieCustomDolbyVisionBright",
+      "movieCustomDolbyVisionDark"
+    ]
+  },
+  "display_setting.picture_mode.available_values": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_setting.picture_mode.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_setting.picture_mode.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "calibrated",
+      "standard_pc",
+      "photo_app",
+      "dolby_vision_game",
+      "gallery",
+      "movie_filmmaker_experience"
+    ]
+  },
+  "display_setting.picture_mode.prerequisites": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.picture_mode.confirm_prerequisite": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.calibrated_picture_mode": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_setting.calibrated_picture_mode.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_setting.calibrated_picture_mode.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "unsupported_app",
+      "on_low_latency_path"
+    ]
+  },
+  "display_setting.calibrated_picture_mode.prerequisites": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_setting.calibrated_picture_mode.confirm_prerequisite": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "remote_key.d_pad": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "up",
+      "down",
+      "left",
+      "right",
+      "center",
+      "back",
+      "home"
+    ]
+  },
+  "remote_key.shortcut": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "tv",
+      "guide",
+      "app_menu",
+      "menu",
+      "quick_settings",
+      "audio"
+    ]
+  },
+  "remote_key.skip_channels": {
+    "type": "int",
+    "min": -1,
+    "max": 1,
+    "values": null
+  },
+  "remote_key": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "playback_control.signal_info.audio": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "playback_control.signal_info.video": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "fw_update.update_exist": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "fw_update.start_update_availability": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "available",
+      "update_ongoing",
+      "wait_for_reboot",
+      "merging"
+    ]
+  },
+  "fw_update.info": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "fw_update.start_update": {
+    "type": "void",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "remote_start": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "remote_start.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "energy_mode_not_optimized",
+      "energy_mode_not_increased"
+    ]
+  },
+  "display_and_sound_setting.theatre_mode": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "filmmakerExperience",
+      "daytime",
+      "movieNight",
+      "quiet",
+      "dialogueFun",
+      "custom",
+      "off"
+    ]
+  },
+  "display_and_sound_setting.theatre_mode.available_values": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_and_sound_setting.theatre_mode.availability": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "display_and_sound_setting.theatre_mode.unavailable_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "non_movie_app",
+      "restricted_content_mode"
+    ]
+  },
+  "display_and_sound_setting.theatre_mode.prerequisites": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_and_sound_setting.theatre_mode.confirm_prerequisite": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "lot5Agreement"
+    ]
+  },
+  "display_and_sound_setting.theatre_mode.limitation_reason": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "none",
+      "by_connected_devices",
+      "by_audio_system",
+      "by_bluetooth_device",
+      "by_wired_headphone",
+      "by_option_speaker",
+      "due_to_multiple_outputs",
+      "due_to_post_processing_setting",
+      "due_to_voice_emphasis_setting",
+      "due_to_mono_audio_setting"
+    ]
+  },
+  "opspk.generic_command_in_use": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "opspk.setup": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.sw": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.rl": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.rr": {
+    "type": "bool",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.modelname.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.modelname.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_history.modelname.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.connection_status.sw": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "disconnected",
+      "connected",
+      "protected"
+    ]
+  },
+  "speaker_connection_setting.connection_status.rl": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "disconnected",
+      "connected",
+      "protected"
+    ]
+  },
+  "speaker_connection_setting.connection_status.rr": {
+    "type": "enum",
+    "min": null,
+    "max": null,
+    "values": [
+      "disconnected",
+      "connected",
+      "protected"
+    ]
+  },
+  "speaker_connection_setting.identified_modelname.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.identified_modelname.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.identified_modelname.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.modelname.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.modelname.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.modelname.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.serial_number.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.serial_number.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.serial_number.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.version.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.version.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.version.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.wifi_mac_address.sw": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.wifi_mac_address.rl": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "speaker_connection_setting.wifi_mac_address.rr": {
+    "type": "any",
+    "min": null,
+    "max": null,
+    "values": null
+  },
+  "error_status": {
+    "type": "enum-array",
+    "min": null,
+    "max": null,
+    "values": [
+      "no_error",
+      "protect_rear_left",
+      "protect_rear_right",
+      "protect_sw"
+    ]
+  }
+}

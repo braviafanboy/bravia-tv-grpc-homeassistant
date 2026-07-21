@@ -1,0 +1,25 @@
+# Dev/enumeration tooling (tools/pair_and_enumerate.py). The HA integration
+# itself declares its runtime deps in manifest.json.
+grpcio>=1.76.0
+protobuf>=4.0.0
+aiohttp>=3.9.0
+
+# Unit tests (tests/). pytest + cryptography run the pure wire-decode tests on
+# any Python; pytest-homeassistant-custom-component pulls Home Assistant and
+# runs the config-flow/coordinator tests (Python 3.13; HA doesn't build on 3.14).
+pytest>=8.0.0
+cryptography>=42.0.0
+pytest-homeassistant-custom-component
+
+# Regenerating grpc/bravia_control_pb2*.py from grpc/bravia_control.proto:
+#   python -m grpc_tools.protoc -Igrpc --python_out=grpc --grpc_python_out=grpc \
+#     grpc/bravia_control.proto
+# then re-apply TWO manual patches to the generated code:
+#   1. pb2_grpc: make the import relative -> `from . import bravia_control_pb2`.
+#   2. pb2: register in a PRIVATE pool, NOT the global Default() one --
+#      `_pool = _descriptor_pool.DescriptorPool()` /
+#      `DESCRIPTOR = _pool.AddSerializedFile(...)`. This keeps our proto's symbol
+#      names from colliding in the shared descriptor pool with a co-installed
+#      bravia_quad integration, which uses the same proto package.
+# Pinned so the emitted runtime-version guard matches HA's protobuf (6.31.x).
+grpcio-tools>=1.74,<1.75

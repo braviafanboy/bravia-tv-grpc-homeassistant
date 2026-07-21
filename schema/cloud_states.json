@@ -1,0 +1,61 @@
+{
+  "states": [
+    {
+      "name": "power",
+      "value": true,
+      "type": "bool"
+    },
+    {
+      "name": "volume",
+      "value": 16,
+      "type": "int"
+    },
+    {
+      "name": "input",
+      "value": "HDMI 3 (eARC/ARC)",
+      "type": "any"
+    },
+    {
+      "name": "sleep_timer",
+      "value": "off",
+      "type": "enum"
+    },
+    {
+      "name": "speaker_type",
+      "value": "audio_system",
+      "type": "enum"
+    },
+    {
+      "name": "picture",
+      "value": true,
+      "type": "bool"
+    },
+    {
+      "name": "picture_mode",
+      "value": "professional",
+      "type": "enum"
+    },
+    {
+      "name": "playback",
+      "value": "none",
+      "type": "enum"
+    },
+    {
+      "name": "ui_elements",
+      "value": "null",
+      "type": "any"
+    },
+    {
+      "name": "brightness",
+      "value": 15,
+      "type": "int"
+    },
+    {
+      "name": "focused_ui_element",
+      "value": "null",
+      "type": "any"
+    }
+  ],
+  "timestamp": "2026-07-18T22:21:00Z",
+  "connectivity": true
+}

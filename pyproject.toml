@@ -1,0 +1,28 @@
+[tool.pytest.ini_options]
+# Home Assistant tests use pytest-asyncio in auto mode (the `hass` fixture is
+# async). Harmless for the pure-decoder tests, which are synchronous.
+asyncio_mode = "auto"
+# Put the repo root on sys.path so the HA tests can `import custom_components…`
+# regardless of how pytest is launched (the `pytest` console script does not add
+# the CWD, unlike `python -m pytest`).
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = [
+    # Generated protobuf code — do not lint or format.
+    "custom_components/bravia_tv_grpc/grpc/bravia_control_pb2.py",
+    "custom_components/bravia_tv_grpc/grpc/bravia_control_pb2_grpc.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Dev/bootstrap scripts (not shipped): long print lines, deliberate import
+# placement after synthetic-package setup, ad-hoc file handling.
+"tools/**" = ["E402", "E501", "SIM115", "UP042"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
