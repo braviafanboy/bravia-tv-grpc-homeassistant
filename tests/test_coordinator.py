@@ -87,6 +87,29 @@ async def test_availability_toggles(hass: HomeAssistant) -> None:
     await coordinator.async_shutdown()
 
 
+async def test_set_field_raises_on_rejection(hass: HomeAssistant) -> None:
+    """A rejected write surfaces to the user (and does not apply the value)."""
+    from homeassistant.exceptions import HomeAssistantError
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="dev", data={"host": "x"})
+    entry.add_to_hass(hass)
+    client = _client()
+    client.exec_command.return_value = False  # TV rejects the write
+    coordinator = BraviaTvCoordinator(hass, entry, client)
+    await coordinator.async_start()
+
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_set_field("display_setting.brightness", 12)
+    assert coordinator.data.get("display_setting.brightness") is None  # not applied
+
+    client.exec_command.return_value = True  # accepted -> applied optimistically
+    await coordinator.async_set_field("display_setting.brightness", 12)
+    assert coordinator.data["display_setting.brightness"] == 12
+
+    await coordinator.async_shutdown()
+
+
 async def test_firmware_available_sets_pending_flag(hass: HomeAssistant) -> None:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 

@@ -69,6 +69,10 @@ class BraviaTvNumber(BraviaTvEntity, NumberEntity):
         super().__init__(coordinator, grpc_path)
         self._attr_translation_key = translation_key
         self._attr_icon = icon
+        # The master `volume` number duplicates the media_player's volume slider,
+        # so it's disabled by default (enable it for automations if wanted).
+        if grpc_path == "volume":
+            self._attr_entity_registry_enabled_default = False
         meta = coordinator.client.capabilities.get(grpc_path)
         if meta is not None and meta.min is not None:
             self._attr_native_min_value = float(meta.min)

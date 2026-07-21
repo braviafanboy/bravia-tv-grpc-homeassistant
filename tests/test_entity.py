@@ -42,6 +42,32 @@ def _coordinator(hass: HomeAssistant) -> BraviaTvCoordinator:
     return BraviaTvCoordinator(hass, entry, client)
 
 
+async def test_media_player_duplicates_disabled_by_default(hass: HomeAssistant) -> None:
+    """power/mute switches and the master volume number duplicate the
+    media_player, so they're disabled by default; unique settings are not."""
+    from custom_components.bravia_tv_grpc.number import BraviaTvNumber
+
+    coordinator = _coordinator(hass)
+    await coordinator.async_start()
+
+    power = BraviaTvSwitch(coordinator, "power", "power")
+    mute = BraviaTvSwitch(coordinator, "mute", "mute")
+    bt3d = BraviaTvSwitch(coordinator, "sound_setting.bt_3d_surround", "bt3d")
+    vol = BraviaTvNumber(coordinator, "volume", "volume", "mdi:volume-high")
+    brightness = BraviaTvNumber(
+        coordinator, "display_setting.brightness", "brightness", "mdi:brightness-6"
+    )
+
+    assert power.entity_registry_enabled_default is False
+    assert mute.entity_registry_enabled_default is False
+    assert vol.entity_registry_enabled_default is False
+    # A unique setting stays enabled by default.
+    assert bt3d.entity_registry_enabled_default is True
+    assert brightness.entity_registry_enabled_default is True
+
+    await coordinator.async_shutdown()
+
+
 async def test_writable_entity_gated_by_unavailable_reason(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     await coordinator.async_start()

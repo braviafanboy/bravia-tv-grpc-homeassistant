@@ -27,6 +27,11 @@ _SWITCHES: dict[str, str] = {
     "display_setting.calibrated_picture_mode": "calibrated_picture_mode",
 }
 
+# power/mute duplicate the media_player's own power and mute controls, so they
+# are disabled by default to avoid cluttering the device page; users who want
+# the standalone entities (e.g. for automations) can enable them.
+_DISABLED_BY_DEFAULT: frozenset[str] = frozenset({"power", "mute"})
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -53,6 +58,8 @@ class BraviaTvSwitch(BraviaTvEntity, SwitchEntity):
     ) -> None:
         super().__init__(coordinator, grpc_path)
         self._attr_translation_key = translation_key
+        if grpc_path in _DISABLED_BY_DEFAULT:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def is_on(self) -> bool | None:

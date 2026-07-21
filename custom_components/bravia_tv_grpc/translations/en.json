@@ -39,6 +39,11 @@
       }
     }
   },
+  "exceptions": {
+    "exec_rejected": {
+      "message": "The TV rejected the change to {path}. It may not be available in the current context (for example the setting's input, app, or audio output isn't active)."
+    }
+  },
   "entity": {
     "switch": {
       "power": {

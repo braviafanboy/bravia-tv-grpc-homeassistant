@@ -15,6 +15,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -371,14 +372,22 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.loop.call_soon_threadsafe(self._apply_delta, path, value)
 
     async def async_set_field(self, path: str, value: Any) -> None:
-        """Send an ExecCommand and optimistically reflect the new value."""
+        """Send an ExecCommand and optimistically reflect the new value.
+
+        Raises HomeAssistantError if the TV rejects the write, so the failure
+        surfaces to the user instead of silently reverting on the next push.
+        """
         ok = await self.hass.async_add_executor_job(
             self.client.exec_command, path, value
         )
-        if ok:
-            self._apply_delta(path, value)
-        else:
+        if not ok:
             _LOGGER.warning("ExecCommand for %s=%s was rejected", path, value)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="exec_rejected",
+                translation_placeholders={"path": path},
+            )
+        self._apply_delta(path, value)
 
     async def async_send_key(self, path: str, value: Any) -> bool:
         """Fire a momentary action (e.g. a remote key) with no state write.
