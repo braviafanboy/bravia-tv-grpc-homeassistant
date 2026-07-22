@@ -98,6 +98,31 @@ This integration still covers the TV side of audio: **selecting** the soundbar
 as the TV's audio output (the Speakers / Bluetooth selects) and the TV's own
 **Direct Connect** wireless rear speakers / subwoofer.
 
+## Compatible TVs
+
+This integration speaks the same local control plane as Sony's **BRAVIA Connect**
+app, so it works with the TVs that app supports — Sony's recent BRAVIA lineup
+(roughly 2023 onward). Older Sony TVs use the previous *Video & TV SideView* app
+and are **not** compatible.
+
+Supported model families (exact model codes and availability vary by region;
+Sony's [compatible-models list](https://www.sony-asia.com/electronics/support/articles/00305900)
+is authoritative):
+
+- **BRAVIA 9** / **9 II** (XR90)
+- **BRAVIA 8** / **8 II** (XR80 / XR8)
+- **BRAVIA 7** / **7 II** (XR70)
+- **BRAVIA 5** (XR50)
+- **BRAVIA 3** / **3 II** (S30)
+- **BRAVIA 2 II** (S20)
+- **A95L** series
+
+> ⚠️ **Only the BRAVIA 8 II (K-65XR8M2) has been tested.** Because entities are
+> generated from whatever the TV advertises via `GetCapabilities`, other models
+> in the list should pair and work too — but that is unverified. If you try
+> another model, please [open an issue](https://github.com/braviafanboy/bravia-tv-grpc-homeassistant/issues)
+> reporting how it went.
+
 ## Installation
 
 ### Prerequisites
