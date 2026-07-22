@@ -127,8 +127,10 @@ class BraviaTvErrorSensor(BraviaTvEntity, BinarySensorEntity):
         return {"errors": errors} if errors else {}
 
 
-# device_id values that mean "nothing linked".
-_HDMI_EMPTY_IDS = {"", "0x0", "0x00000000", "0"}
+# device_id values that mean "nothing linked". When unlinked the TV reports the
+# literal string "none" (with version "0x00"); a real link carries a hex id (and
+# version "0x10"), so the id alone decides linked/unlinked.
+_HDMI_EMPTY_IDS = {"", "0x0", "0x00000000", "0", "none"}
 
 
 class BraviaTvHdmiDeviceSensor(BraviaTvEntity, BinarySensorEntity):
@@ -138,6 +140,10 @@ class BraviaTvHdmiDeviceSensor(BraviaTvEntity, BinarySensorEntity):
     only one value (not per port), so this reflects the linked Sony/eARC device
     -- typically the soundbar -- with its id and protocol version as attributes
     (shown only while connected, since HA drops attributes from an off entity).
+
+    This is also the BRAVIA Connect "combined" indicator: the TV+soundbar
+    association drops this to ``{"device_id": "none"}`` while audio still routes
+    to the soundbar, so an uncombine is otherwise silent.
     """
 
     _attr_translation_key = "hdmi_device"
@@ -152,19 +158,26 @@ class BraviaTvHdmiDeviceSensor(BraviaTvEntity, BinarySensorEntity):
         data = parse_json_value(raw) if isinstance(raw, str) else raw
         return data if isinstance(data, dict) else {}
 
-    @property
-    def is_on(self) -> bool | None:
+    def _linked_id(self) -> str | None:
+        """The linked device's id, or None if nothing is linked."""
         device_id = self._info().get("device_id")
         if device_id is None:
+            return None
+        text = str(device_id).strip()
+        return None if text.lower() in _HDMI_EMPTY_IDS else text
+
+    @property
+    def is_on(self) -> bool | None:
+        if self._info().get("device_id") is None:
             return None  # nothing reported yet
-        return str(device_id) not in _HDMI_EMPTY_IDS
+        return self._linked_id() is not None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         info = self._info()
         attrs: dict[str, Any] = {}
-        if info.get("device_id"):
+        if self._linked_id() is not None:
             attrs["device_id"] = info["device_id"]
-        if info.get("version") is not None:
-            attrs["version"] = info["version"]
+            if info.get("version") is not None:
+                attrs["version"] = info["version"]
         return attrs
