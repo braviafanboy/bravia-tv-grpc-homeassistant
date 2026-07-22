@@ -240,6 +240,35 @@ async def test_zeroconf_tv_creates_entry(hass: HomeAssistant) -> None:
     )
 
 
+async def test_zeroconf_moved_tv_updates_host(hass: HomeAssistant) -> None:
+    """A configured TV that reappears at a new address is matched by its stable
+    device_unique_id and its stored host/port refreshed in place — no re-pair,
+    no phantom 'new device'."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.bravia_tv_grpc.const import CONF_DEVICE_UNIQUE_ID
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="dev-123",
+        data={
+            "host": "192.0.2.10",
+            CONF_GRPC_PORT: 36547,
+            CONF_DEVICE_UNIQUE_ID: "51b397cf985b8b061839034fef909670e29196d2",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.bravia_tv_grpc.async_setup_entry", return_value=True):
+        result = await _init_zeroconf(hass, _TV_NAME, "192.0.2.99", 40000)
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert entry.data["host"] == "192.0.2.99"
+    assert entry.data[CONF_GRPC_PORT] == 40000
+
+
 async def test_options_flow_sets_manual_port(hass: HomeAssistant) -> None:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 

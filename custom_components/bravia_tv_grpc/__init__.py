@@ -8,6 +8,7 @@ ExecCommandWithAuth. Entities are driven by the device's GetCapabilities schema.
 from __future__ import annotations
 
 import logging
+import re
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
@@ -22,6 +23,7 @@ from .bravia_tv_client import (
     BraviaTvGrpcClient,
 )
 from .const import (
+    CONF_DEVICE_UNIQUE_ID,
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
@@ -34,7 +36,14 @@ from .const import (
 from .coordinator import BraviaTvCoordinator
 from .grpc import credentials as cred
 from .grpc.credentials import GrpcCredentialsError, GrpcCredentialsRefreshError
-from .grpc_discovery import async_discover_port_mdns, discover_grpc_port
+from .grpc_discovery import (
+    async_discover_port_mdns,
+    async_resolve_device_mdns,
+    discover_grpc_port,
+)
+
+# Sony advertises `<friendly name>-<40-hex device_unique_id>._sonysmarthome…`.
+_DEVICE_UID_RE = re.compile(r"-([0-9a-f]{40})", re.IGNORECASE)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +67,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     host = entry.data[CONF_HOST]
     creds = cred.parse_credentials_json(entry.data[CONF_GRPC_KEYS])
     device_id = entry.data.get(CONF_GRPC_DEVICE_ID) or creds.get("device_id")
+
+    # Record the device's stable mDNS unique id for entries paired before it was
+    # stored, so a later IP change is matched to this entry and self-heals.
+    if not entry.data.get(CONF_DEVICE_UNIQUE_ID):
+        await _backfill_device_unique_id(hass, entry, host)
 
     manual_port = entry.options.get(CONF_GRPC_PORT) or None
     port = await _resolve_port(hass, host, entry.data.get(CONF_GRPC_PORT), manual_port)
@@ -120,6 +134,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+async def _backfill_device_unique_id(
+    hass: HomeAssistant, entry: ConfigEntry, host: str
+) -> None:
+    """Resolve the device's mDNS unique id at the current host and persist it.
+
+    Best-effort — a blocked mDNS just leaves the entry as-is (it keeps working;
+    only the automatic IP-change recovery is unavailable until next time).
+    """
+    try:
+        resolved = await async_resolve_device_mdns(hass, host)
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("unique-id backfill mDNS lookup failed", exc_info=True)
+        return
+    if not resolved:
+        return
+    _, name, _ = resolved
+    match = _DEVICE_UID_RE.search(name or "")
+    if match:
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_DEVICE_UNIQUE_ID: match.group(1).lower()},
+        )
 
 
 async def _ensure_device_info(

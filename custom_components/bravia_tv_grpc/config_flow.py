@@ -30,6 +30,7 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 import voluptuous as vol
 
 from .const import (
+    CONF_DEVICE_UNIQUE_ID,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
     CONF_GRPC_PORT,
@@ -118,20 +119,46 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
         # authoritative backstop for anything this model check can't see.
         if _is_soundbar_model(discovery_info.properties):
             return self.async_abort(reason="not_a_tv")
+        # The soundbar advertises the same service on the same account; capture
+        # the device's unique id so pairing binds to the discovered device (and
+        # rejects a non-TV) instead of guessing.
+        friendly, self._device_unique_id = _parse_mdns_name(discovery_info.name)
+        # An already-configured TV that reappears at a new address (new DHCP
+        # lease) is matched by its stable device_unique_id; refresh the stored
+        # host/port in place so a moved TV self-heals instead of breaking or
+        # showing up as a brand-new discovery.
+        if self._device_unique_id is not None:
+            for entry in self._async_current_entries():
+                if entry.data.get(CONF_DEVICE_UNIQUE_ID) == self._device_unique_id:
+                    self._async_refresh_entry_address(entry, host, discovery_info.port)
+                    return self.async_abort(reason="already_configured")
+        # Fallback for entries paired before the unique id was recorded.
         for entry in self._async_current_entries():
             if entry.data.get(CONF_HOST) == host:
                 return self.async_abort(reason="already_configured")
         self._host = host
         self._port = discovery_info.port
-        # The soundbar advertises the same service on the same account; capture
-        # the device's unique id so pairing binds to the discovered device (and
-        # rejects a non-TV) instead of guessing.
-        friendly, self._device_unique_id = _parse_mdns_name(discovery_info.name)
         await self.async_set_unique_id(discovery_info.name)
         self._abort_if_unique_id_configured()
         # Show the real device name so a TV and a soundbar are distinguishable.
         self.context["title_placeholders"] = {"name": friendly or f"Bravia TV ({host})"}
         return await self.async_step_oauth()
+
+    @callback
+    def _async_refresh_entry_address(
+        self, entry: ConfigEntry, host: str, port: int | None
+    ) -> None:
+        """Update a moved TV's stored host/port in place and reload it."""
+        updates: dict[str, Any] = {}
+        if host and entry.data.get(CONF_HOST) != host:
+            updates[CONF_HOST] = host
+        if port and entry.data.get(CONF_GRPC_PORT) != port:
+            updates[CONF_GRPC_PORT] = port
+        if updates:
+            self.hass.config_entries.async_update_entry(
+                entry, data={**entry.data, **updates}
+            )
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -233,6 +260,7 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_HOST: self._host,
                         CONF_GRPC_PORT: self._port,
                         CONF_GRPC_DEVICE_ID: device_id,
+                        CONF_DEVICE_UNIQUE_ID: self._device_unique_id,
                         CONF_GRPC_KEYS: credentials_to_json(credentials),
                     },
                 )
