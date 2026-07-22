@@ -84,6 +84,27 @@ async def test_media_player_source_blanks_when_powered_off(hass: HomeAssistant) 
     await coordinator.async_shutdown()
 
 
+async def test_operation_speaker_captures_opspk_setup(hass: HomeAssistant) -> None:
+    """The Operation Speaker sensor surfaces opspk.setup raw (the combine value)
+    plus the generic-command-in-use flag."""
+    from custom_components.bravia_tv_grpc.sensor import BraviaTvOperationSpeakerSensor
+
+    coordinator = await _coordinator(hass)
+    sensor = BraviaTvOperationSpeakerSensor(coordinator)
+
+    coordinator._apply_delta("opspk.setup", "none")
+    coordinator._apply_delta("opspk.generic_command_in_use", False)
+    assert sensor.native_value == "none"
+    assert sensor.extra_state_attributes == {"command_in_use": False}
+
+    # A (hypothetical) combined value must pass through verbatim for replay.
+    coordinator._apply_delta("opspk.setup", '{"id":"audiosystem@hdmi"}')
+    coordinator._apply_delta("opspk.generic_command_in_use", True)
+    assert sensor.native_value == '{"id":"audiosystem@hdmi"}'
+    assert sensor.extra_state_attributes["command_in_use"] is True
+    await coordinator.async_shutdown()
+
+
 async def test_empty_audio_while_playing_reports_pcm(hass: HomeAssistant) -> None:
     """Twitch + Audio System output: audio empty, video playing -> PCM."""
     sensor = await _sensor(hass)
