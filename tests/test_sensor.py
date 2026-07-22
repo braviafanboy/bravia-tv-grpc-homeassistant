@@ -1,7 +1,7 @@
-"""Audio Signal sensor tests (require HA test harness).
+"""Sensor / media_player tests (require HA test harness).
 
-The eARC/soundbar path leaves signal_info.audio empty while an app decodes PCM;
-the sensor infers PCM from active playback without mislabelling bitstream audio.
+Covers the Audio Signal PCM inference and the power-gating of the App sensor
+and media_player source (the TV keeps the last app in networked standby).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _enable(enable_custom_integrations):
     yield
 
 
-async def _sensor(hass: HomeAssistant) -> BraviaTvAudioSignalSensor:
+async def _coordinator(hass: HomeAssistant) -> BraviaTvCoordinator:
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     entry = MockConfigEntry(domain=DOMAIN, unique_id="dev", data={"host": "x"})
@@ -43,7 +43,45 @@ async def _sensor(hass: HomeAssistant) -> BraviaTvAudioSignalSensor:
     client.read_application_list.return_value = []
     coordinator = BraviaTvCoordinator(hass, entry, client)
     await coordinator.async_start()
-    return BraviaTvAudioSignalSensor(coordinator)
+    return coordinator
+
+
+async def _sensor(hass: HomeAssistant) -> BraviaTvAudioSignalSensor:
+    return BraviaTvAudioSignalSensor(await _coordinator(hass))
+
+
+async def test_app_sensor_blanks_when_powered_off(hass: HomeAssistant) -> None:
+    """In standby the TV still reports the last app; the sensor must show nothing
+    once power is off, rather than a phantom app."""
+    from custom_components.bravia_tv_grpc.sensor import BraviaTvAppSensor
+
+    coordinator = await _coordinator(hass)
+    sensor = BraviaTvAppSensor(coordinator)
+    coordinator._apply_delta("system_setting.application", "tv.twitch.android.app")
+    coordinator._apply_delta("system_setting.tvapp.input", '{"type":"none"}')
+
+    coordinator._apply_delta("power", True)
+    assert sensor.native_value is not None  # reports the app while on
+
+    coordinator._apply_delta("power", False)  # app field is still set (standby)
+    assert sensor.native_value is None
+    await coordinator.async_shutdown()
+
+
+async def test_media_player_source_blanks_when_powered_off(hass: HomeAssistant) -> None:
+    from custom_components.bravia_tv_grpc.media_player import BraviaTvMediaPlayer
+
+    coordinator = await _coordinator(hass)
+    mp = BraviaTvMediaPlayer(coordinator)
+    coordinator._apply_delta("system_setting.application", "tv.twitch.android.app")
+    coordinator._apply_delta("system_setting.tvapp.input", '{"type":"none"}')
+
+    coordinator._apply_delta("power", True)
+    assert mp.source is not None
+
+    coordinator._apply_delta("power", False)
+    assert mp.source is None
+    await coordinator.async_shutdown()
 
 
 async def test_empty_audio_while_playing_reports_pcm(hass: HomeAssistant) -> None:

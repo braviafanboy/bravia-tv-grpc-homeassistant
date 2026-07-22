@@ -133,7 +133,12 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
 
         ``tvapp.input`` reads ``{"type":"none"}`` when an Android app (not an
         HDMI/external input) is in front, so fall back to the app name then.
+
+        In networked standby the TV keeps the last foreground app in its state,
+        so gate on power to avoid reporting a phantom source while it's off.
         """
+        if self._state.get(_POWER) is False:
+            return None
         label = source_label(self._state.get(_INPUT))
         if label:
             return label
@@ -141,7 +146,9 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
 
     @property
     def _current_app_package(self) -> str | None:
-        """Foreground Android app package, if one is running."""
+        """Foreground Android app package, if one is running (and the TV is on)."""
+        if self._state.get(_POWER) is False:
+            return None
         pkg = self._state.get(_APP)
         return pkg if isinstance(pkg, str) and pkg else None
 

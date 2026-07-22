@@ -22,6 +22,7 @@ from .util import parse_json_value, source_label
 
 _SIGNAL_VIDEO = "playback_control.signal_info.video"
 _SIGNAL_AUDIO = "playback_control.signal_info.audio"
+_POWER = "power"
 _APP = "system_setting.application"
 _APP_LIST = "system_setting.application_list"
 # Current external input (any-typed JSON); reads {"type":"none"} when an app,
@@ -286,6 +287,11 @@ class BraviaTvAppSensor(BraviaTvEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
+        # In networked standby the TV keeps pushing state but never clears the
+        # foreground-app field, so it would otherwise report a stale app. When
+        # power is off there is no active app/source.
+        if self.state_value(_POWER) is False:
+            return None
         label = source_label(self.state_value(_INPUT))
         if label:
             return label
