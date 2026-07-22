@@ -129,9 +129,6 @@
       },
       "bluetooth_device": {
         "name": "Bluetooth Device"
-      },
-      "operation_speaker": {
-        "name": "Operation Speaker"
       }
     },
     "binary_sensor": {

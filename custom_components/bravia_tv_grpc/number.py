@@ -38,6 +38,15 @@ _NUMBERS: dict[str, tuple[str, str]] = {
     "sound_setting.volume.subwoofer": ("subwoofer_volume", "mdi:speaker-wireless"),
 }
 
+# Disabled by default (still creatable, just not enabled on a fresh install):
+# the master `volume` duplicates the media_player slider, and the HDMI-output /
+# TV-speaker levels are niche per-output controls most users won't touch.
+_DISABLED_BY_DEFAULT = {
+    "volume",
+    "sound_setting.volume.hdmi",
+    "sound_setting.volume.tv_speaker",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -69,9 +78,7 @@ class BraviaTvNumber(BraviaTvEntity, NumberEntity):
         super().__init__(coordinator, grpc_path)
         self._attr_translation_key = translation_key
         self._attr_icon = icon
-        # The master `volume` number duplicates the media_player's volume slider,
-        # so it's disabled by default (enable it for automations if wanted).
-        if grpc_path == "volume":
+        if grpc_path in _DISABLED_BY_DEFAULT:
             self._attr_entity_registry_enabled_default = False
         meta = coordinator.client.capabilities.get(grpc_path)
         if meta is not None and meta.min is not None:

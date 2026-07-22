@@ -54,6 +54,18 @@ async def test_media_player_duplicates_disabled_by_default(hass: HomeAssistant) 
     mute = BraviaTvSwitch(coordinator, "mute", "mute")
     bt3d = BraviaTvSwitch(coordinator, "sound_setting.bt_3d_surround", "bt3d")
     vol = BraviaTvNumber(coordinator, "volume", "volume", "mdi:volume-high")
+    hdmi_vol = BraviaTvNumber(
+        coordinator,
+        "sound_setting.volume.hdmi",
+        "hdmi_output_volume",
+        "mdi:volume-high",
+    )
+    tv_spk_vol = BraviaTvNumber(
+        coordinator,
+        "sound_setting.volume.tv_speaker",
+        "tv_speaker_volume",
+        "mdi:speaker",
+    )
     brightness = BraviaTvNumber(
         coordinator, "display_setting.brightness", "brightness", "mdi:brightness-6"
     )
@@ -61,6 +73,9 @@ async def test_media_player_duplicates_disabled_by_default(hass: HomeAssistant) 
     assert power.entity_registry_enabled_default is False
     assert mute.entity_registry_enabled_default is False
     assert vol.entity_registry_enabled_default is False
+    # Niche per-output volumes are disabled by default too.
+    assert hdmi_vol.entity_registry_enabled_default is False
+    assert tv_spk_vol.entity_registry_enabled_default is False
     # A unique setting stays enabled by default.
     assert bt3d.entity_registry_enabled_default is True
     assert brightness.entity_registry_enabled_default is True

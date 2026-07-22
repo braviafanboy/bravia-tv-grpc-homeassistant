@@ -23,13 +23,6 @@ from .util import parse_json_value, source_label
 _SIGNAL_VIDEO = "playback_control.signal_info.video"
 _SIGNAL_AUDIO = "playback_control.signal_info.audio"
 _POWER = "power"
-# BRAVIA Connect "combine": the operation-speaker (opspk) association. Reads
-# "none" when the TV and soundbar are not combined, otherwise the association
-# value. Surfaced diagnostically so the raw value is recorded in history -- it
-# is both the definitive combine indicator and the value needed to reproduce a
-# combine over gRPC. generic_command_in_use flags an in-progress opspk command.
-_OPSPK_SETUP = "opspk.setup"
-_OPSPK_IN_USE = "opspk.generic_command_in_use"
 _APP = "system_setting.application"
 _APP_LIST = "system_setting.application_list"
 # Current external input (any-typed JSON); reads {"type":"none"} when an app,
@@ -173,8 +166,6 @@ async def async_setup_entry(
         entities.append(BraviaTvRestrictedControlsSensor(coordinator))
     if _BT_DEVICE in caps:
         entities.append(BraviaTvBluetoothDeviceSensor(coordinator))
-    if _OPSPK_SETUP in caps:
-        entities.append(BraviaTvOperationSpeakerSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -423,43 +414,6 @@ class BraviaTvRestrictedControlsSensor(BraviaTvEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"restrictions": self._restrictions()}
-
-
-class BraviaTvOperationSpeakerSensor(BraviaTvEntity, SensorEntity):
-    """BRAVIA Connect "combine" state: the operation-speaker (opspk) setup value.
-
-    ``opspk.setup`` reads ``"none"`` when the TV and soundbar are not combined,
-    otherwise the (any-typed) association value the app writes to combine them.
-    Exposed raw and diagnostic so history records the exact value at the moment
-    of a (random) recombine -- the value needed to reproduce a combine on demand.
-    """
-
-    _attr_translation_key = "operation_speaker"
-    _attr_icon = "mdi:speaker-multiple"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
-        super().__init__(coordinator, _OPSPK_SETUP)
-
-    @property
-    def native_value(self) -> str | None:
-        raw = self._value
-        if raw is None:
-            return None
-        text = raw if isinstance(raw, str) else str(raw)
-        # HA caps a state at 255 chars; keep the full value in an attribute.
-        return text[:255]
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        attrs: dict[str, Any] = {}
-        raw = self._value
-        if isinstance(raw, str) and len(raw) > 255:
-            attrs["raw"] = raw
-        in_use = self.state_value(_OPSPK_IN_USE)
-        if in_use is not None:
-            attrs["command_in_use"] = bool(in_use)
-        return attrs
 
 
 class BraviaTvBluetoothDeviceSensor(BraviaTvEntity, SensorEntity):
