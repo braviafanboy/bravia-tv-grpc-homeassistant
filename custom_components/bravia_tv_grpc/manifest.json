@@ -5,12 +5,18 @@
     "@braviafanboy"
   ],
   "config_flow": true,
-  "dependencies": ["zeroconf"],
+  "dependencies": [
+    "zeroconf"
+  ],
   "documentation": "https://github.com/braviafanboy/bravia-tv-grpc-homeassistant",
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/braviafanboy/bravia-tv-grpc-homeassistant/issues",
-  "requirements": ["grpcio>=1.76.0"],
-  "version": "0.1.6",
-  "zeroconf": ["_sonysmarthome._tcp.local."]
+  "requirements": [
+    "grpcio>=1.76.0"
+  ],
+  "version": "0.1.7",
+  "zeroconf": [
+    "_sonysmarthome._tcp.local."
+  ]
 }

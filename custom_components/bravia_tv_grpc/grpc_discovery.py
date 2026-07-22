@@ -10,6 +10,7 @@ any other HTTP/2 server returns UNIMPLEMENTED (or fails to speak gRPC at all).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import socket
 from typing import TYPE_CHECKING
@@ -90,7 +91,11 @@ async def _async_find_service_info(hass: HomeAssistant, host: str, timeout: floa
     from zeroconf import ServiceStateChange
     from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
 
-    aiozc = await ha_zeroconf.async_get_async_zeroconf(hass)
+    # async_get_async_zeroconf became a sync @callback in newer HA cores (it
+    # used to be a coroutine); support both so neither version breaks the flow.
+    aiozc = ha_zeroconf.async_get_async_zeroconf(hass)
+    if inspect.isawaitable(aiozc):
+        aiozc = await aiozc
     names: list[tuple[str, str]] = []
 
     def _handler(zeroconf, service_type, name, state_change) -> None:

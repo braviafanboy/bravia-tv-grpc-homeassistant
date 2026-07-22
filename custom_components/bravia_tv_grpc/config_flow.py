@@ -170,7 +170,13 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
             # Resolve the entered IP to its exact Sony device via mDNS first: this
             # yields the port AND the device's unique id, so an account with more
             # than one TV pairs the right one and a soundbar is rejected up front.
-            resolved = await async_resolve_device_mdns(self.hass, self._host)
+            # Best-effort: an mDNS/zeroconf failure must degrade to the port scan,
+            # never crash the flow.
+            try:
+                resolved = await async_resolve_device_mdns(self.hass, self._host)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("mDNS device resolution failed", exc_info=True)
+                resolved = None
             if resolved is not None:
                 port, name, props = resolved
                 if _is_soundbar_model(props):
