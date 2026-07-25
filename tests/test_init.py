@@ -16,17 +16,12 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.const import CONF_HOST  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
+from pybravia_connect import AuthError, CredentialsRefreshError  # noqa: E402
 
-from custom_components.bravia_tv_grpc.bravia_tv_client import (  # noqa: E402
-    BraviaTvAuthError,
-)
 from custom_components.bravia_tv_grpc.const import (  # noqa: E402
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
     DOMAIN,
-)
-from custom_components.bravia_tv_grpc.grpc.credentials import (  # noqa: E402
-    GrpcCredentialsRefreshError,
 )
 
 INTG = "custom_components.bravia_tv_grpc"
@@ -79,9 +74,9 @@ async def test_transient_refresh_failure_retries(hass: HomeAssistant) -> None:
     await _run_setup(
         hass,
         entry,
-        connect_side_effect=BraviaTvAuthError("handshake failed"),
+        connect_side_effect=AuthError("handshake failed"),
         # No HTTP status -> looks like a dropped connection.
-        refresh_side_effect=GrpcCredentialsRefreshError("connection reset"),
+        refresh_side_effect=CredentialsRefreshError("connection reset"),
     )
     assert entry.state is ConfigEntryState.SETUP_RETRY
     assert not list(entry.async_get_active_flows(hass, {"reauth"}))
@@ -94,8 +89,8 @@ async def test_rejected_refresh_token_triggers_reauth(hass: HomeAssistant) -> No
     await _run_setup(
         hass,
         entry,
-        connect_side_effect=BraviaTvAuthError("handshake failed"),
-        refresh_side_effect=GrpcCredentialsRefreshError("HTTP 401", status=401),
+        connect_side_effect=AuthError("handshake failed"),
+        refresh_side_effect=CredentialsRefreshError("HTTP 401", status=401),
     )
     assert entry.state is ConfigEntryState.SETUP_ERROR
     assert list(entry.async_get_active_flows(hass, {"reauth"}))
@@ -110,8 +105,8 @@ async def test_refreshed_keys_still_rejected_retries(hass: HomeAssistant) -> Non
         entry,
         # First connect fails; refresh succeeds; second connect fails again.
         connect_side_effect=[
-            BraviaTvAuthError("handshake failed"),
-            BraviaTvAuthError("handshake failed: INVALID_ARGUMENT"),
+            AuthError("handshake failed"),
+            AuthError("handshake failed: INVALID_ARGUMENT"),
         ],
         refresh_side_effect=None,  # AsyncMock returns a MagicMock (fresh creds)
     )

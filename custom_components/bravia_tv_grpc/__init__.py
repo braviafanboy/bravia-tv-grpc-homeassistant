@@ -16,12 +16,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-
-from .bravia_tv_client import (
-    BraviaTvAuthError,
-    BraviaTvConnectionError,
-    BraviaTvGrpcClient,
+from pybravia_connect import AuthError, CredentialsError, CredentialsRefreshError
+from pybravia_connect import ConnectionError as BraviaConnectionError
+from pybravia_connect import credentials as cred
+from pybravia_connect.credentials import (
+    async_get_devices,
+    async_refresh_access_token,
 )
+
+from .bravia_connect_backend import BraviaConnectBackend
 from .const import (
     CONF_DEVICE_UNIQUE_ID,
     CONF_FW_PENDING,
@@ -34,12 +37,11 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import BraviaTvCoordinator
-from .grpc import credentials as cred
-from .grpc.credentials import GrpcCredentialsError, GrpcCredentialsRefreshError
 from .grpc_discovery import (
     async_discover_port_mdns,
     async_resolve_device_mdns,
     discover_grpc_port,
+    is_control_device_service,
 )
 
 # Sony advertises `<friendly name>-<40-hex device_unique_id>._sonysmarthome…`.
@@ -97,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         coordinator = await _connect(hass, entry, host, port, creds, device_id)
-    except BraviaTvAuthError as err:
+    except AuthError as err:
         # A TV reboot invalidates the Sony session keys (and changes the port,
         # already handled above). Refresh the keys via the cloud and retry once.
         _LOGGER.info("gRPC auth failed (%s); refreshing Sony session keys", err)
@@ -118,14 +120,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ) from err2
         try:
             coordinator = await _connect(hass, entry, host, port, creds, device_id)
-        except (BraviaTvAuthError, BraviaTvConnectionError) as err2:
+        except (AuthError, BraviaConnectionError) as err2:
             # Fresh, valid cloud keys were still rejected by the TV — it is
             # almost certainly still settling after a reboot. Re-authentication
             # would only yield equivalent keys, so retry rather than prompt.
             raise ConfigEntryNotReady(
                 f"TV rejected refreshed credentials, will retry: {err2}"
             ) from err2
-    except BraviaTvConnectionError as err:
+    except BraviaConnectionError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -208,10 +210,10 @@ async def _fetch_device_hardware(
     """Best-effort Sony IoT device-info fetch; None on failure."""
     try:
         session = async_get_clientsession(hass)
-        token = (
-            await cred.async_refresh_access_token(session, creds["refresh_token"])
-        )["access_token"]
-        devices = (await cred.async_get_devices(session, token)).get("devices", [])
+        token = (await async_refresh_access_token(session, creds["refresh_token"]))[
+            "access_token"
+        ]
+        devices = (await async_get_devices(session, token)).get("devices", [])
     except Exception:  # noqa: BLE001
         _LOGGER.debug("device-info fetch failed", exc_info=True)
         return None
@@ -240,7 +242,7 @@ async def _connect(
     device_id: str,
 ) -> BraviaTvCoordinator:
     """Build a client + coordinator and start it (connect, seed, push)."""
-    client = BraviaTvGrpcClient(
+    client = BraviaConnectBackend(
         host,
         port,
         device_id,
@@ -260,9 +262,9 @@ def _needs_reauth(err: Exception) -> bool:
     unrecoverable without the user; network resets, 5xx and TV-side handshake
     errors are transient and should be retried instead.
     """
-    if isinstance(err, GrpcCredentialsError):
+    if isinstance(err, CredentialsError):
         return True
-    if isinstance(err, GrpcCredentialsRefreshError):
+    if isinstance(err, CredentialsRefreshError):
         return err.status in (400, 401, 403)
     return False
 
@@ -287,10 +289,14 @@ async def _resolve_port(
     # 0. Manual override from options — try it first (escape hatch for networks
     #    where discovery is blocked). If it no longer serves (TV rebooted onto a
     #    new port), fall through to normal discovery rather than failing.
-    if manual and await hass.async_add_executor_job(_port_serves_grpc, host, manual):
+    if manual and await hass.async_add_executor_job(
+        is_control_device_service, host, manual
+    ):
         return manual
     # 1. Cached port from a previous run — instant when the TV hasn't rebooted.
-    if cached and await hass.async_add_executor_job(_port_serves_grpc, host, cached):
+    if cached and await hass.async_add_executor_job(
+        is_control_device_service, host, cached
+    ):
         return cached
     # 2. mDNS (_sonysmarthome._tcp) — fast, handles a changed port after reboot.
     #    Best-effort: any zeroconf hiccup must fall through to the scan, never
@@ -300,7 +306,9 @@ async def _resolve_port(
     except Exception:  # noqa: BLE001
         _LOGGER.debug("mDNS port discovery failed; falling back to scan", exc_info=True)
         port = None
-    if port and await hass.async_add_executor_job(_port_serves_grpc, host, port):
+    if port and await hass.async_add_executor_job(
+        is_control_device_service, host, port
+    ):
         return port
     # 3. TCP scan — last resort. The TV's dynamic port has only ever been seen
     #    in the Linux ephemeral range, so scan that first (about half the ports,
@@ -314,12 +322,6 @@ async def _resolve_port(
     return await hass.async_add_executor_job(
         discover_grpc_port, host, candidates, range(1024, 65536)
     )
-
-
-def _port_serves_grpc(host: str, port: int) -> bool:
-    from .grpc_discovery import is_control_device_service
-
-    return is_control_device_service(host, port)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

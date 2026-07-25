@@ -27,6 +27,13 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+from pybravia_connect import (
+    DeviceSelectError,
+    OAuthError,
+    async_complete_oauth_flow,
+    credentials_to_json,
+    start_oauth_login,
+)
 import voluptuous as vol
 
 from .const import (
@@ -35,13 +42,6 @@ from .const import (
     CONF_GRPC_KEYS,
     CONF_GRPC_PORT,
     DOMAIN,
-)
-from .grpc.credentials import (
-    GrpcNotATvError,
-    GrpcOAuthError,
-    async_complete_oauth_flow,
-    credentials_to_json,
-    start_oauth_login,
 )
 from .grpc_discovery import async_resolve_device_mdns, discover_grpc_port
 
@@ -228,11 +228,12 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
                     device_id=reauth_device_id,
                     device_unique_id=self._device_unique_id,
                 )
-            except GrpcNotATvError:
-                # The discovered device is a soundbar (or other non-TV) — that is
-                # the bravia_quad integration's job, not this one.
-                return self.async_abort(reason="not_a_tv")
-            except GrpcOAuthError:
+            except DeviceSelectError as err:
+                # Wrong type for a unique-id match (soundbar) vs no/ambiguous TV.
+                if "expected" in str(err).lower():
+                    return self.async_abort(reason="not_a_tv")
+                errors["base"] = "oauth_failed"
+            except OAuthError:
                 errors["base"] = "oauth_failed"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Sony Seeds pairing failed")

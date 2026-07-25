@@ -20,8 +20,3 @@ CONF_DEVICE_UNIQUE_ID = "device_unique_id"
 # fw_update.update_exist becomes true; cleared once the device info is
 # re-fetched after it clears (i.e. the update was applied).
 CONF_FW_PENDING = "fw_update_pending"
-
-# gRPC service identity (verified on the K-65XR8M2). BRAVIA TVs serve this on a
-# DYNAMIC port that changes across reboots, so it is discovered at runtime via
-# mDNS or a port scan — see grpc_discovery.py.
-GRPC_SERVICE = "jp.co.sony.hes.ssh.controldevice.v1.ControlDeviceService"

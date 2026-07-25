@@ -254,9 +254,6 @@ def load_pkg():
     btv = types.ModuleType("bravia_tv")
     btv.__path__ = [str(PKG)]
     sys.modules["bravia_tv"] = btv
-    grpc_pkg = types.ModuleType("bravia_tv.grpc")
-    grpc_pkg.__path__ = [str(PKG / "grpc")]
-    sys.modules["bravia_tv.grpc"] = grpc_pkg
 
     def load(qual, rel):
         spec = importlib.util.spec_from_file_location(qual, PKG / rel)
@@ -267,18 +264,10 @@ def load_pkg():
 
     for q, r in [
         ("bravia_tv.const", "const.py"),
-        ("bravia_tv.grpc.credentials", "grpc/credentials.py"),
-        ("bravia_tv.grpc.get_states_request", "grpc/get_states_request.py"),
-        ("bravia_tv.grpc.get_states_auth", "grpc/get_states_auth.py"),
-        ("bravia_tv.grpc.exec_command_request", "grpc/exec_command_request.py"),
-        (
-            "bravia_tv.grpc.get_capabilities_response",
-            "grpc/get_capabilities_response.py",
-        ),
-        ("bravia_tv.grpc.notify_decode", "grpc/notify_decode.py"),
-        ("bravia_tv.bravia_tv_client", "bravia_tv_client.py"),
+        ("bravia_tv.bravia_connect_backend", "bravia_connect_backend.py"),
         ("bravia_tv.coordinator", "coordinator.py"),
         ("bravia_tv.entity", "entity.py"),
+        ("bravia_tv.util", "util.py"),
         ("bravia_tv.switch", "switch.py"),
         ("bravia_tv.number", "number.py"),
         ("bravia_tv.select", "select.py"),
@@ -301,7 +290,7 @@ async def main():
         switch,
         text,
     )
-    from bravia_tv.bravia_tv_client import BraviaTvGrpcClient
+    from bravia_tv.bravia_connect_backend import BraviaConnectBackend
     from bravia_tv.coordinator import BraviaTvCoordinator
 
     creds = json.load(open(REPO / "schema" / ".credentials.json"))
@@ -316,7 +305,7 @@ async def main():
         },
         unique_id=creds["device_id"],
     )
-    client = BraviaTvGrpcClient(
+    client = BraviaConnectBackend(
         "192.0.2.10",
         36547,
         creds["device_id"],

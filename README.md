@@ -6,11 +6,12 @@ the BRAVIA Connect mobile app. Unlike the HTTP REST API, this protocol is
 **push-capable** (`StartNotifyStates`), so Home Assistant reflects changes made
 on the TV instantly, without polling.
 
-Bootstrapped from the excellent
-[bravia-quad-homeassistant](https://github.com/steamEngineer/bravia-quad-homeassistant)
-soundbar integration, whose gRPC + Sony Seeds auth machinery is reused. BRAVIA
-TVs, however, expose a different field schema, a dynamically-assigned gRPC port,
-and different value encodings — all handled here.
+Uses
+[`pybravia-connect`](https://pypi.org/project/pybravia-connect/) for the local
+ControlDeviceService client and Sony Seeds pairing helpers (shared with
+[bravia-quad-homeassistant](https://github.com/steamEngineer/bravia-quad-homeassistant)).
+BRAVIA TVs expose a different field schema and a dynamically-assigned gRPC port
+— discovery and entity mapping stay in this integration.
 
 ## Capabilities
 
@@ -243,15 +244,16 @@ Issues and pull requests are welcome. A few guidelines:
 ### Project layout
 
 - `custom_components/bravia_tv_grpc/`
-  - `grpc/` — the protocol layer: the Sony Seeds auth handshake, protobuf wire
-    codecs (`wire.py`, `notify_decode.py`, `get_states_response.py`, …) and the
-    `GetStates` / `StartNotifyStates` / `GetCapabilities` readers plus the
-    nonce-gated, AES-GCM app-list / resource readers. The wire-decode modules
-    are pure (no Home Assistant, no grpcio) and are what the unit tests exercise.
+  - `bravia_connect_backend.py` — thin sync façade over
+    [`pybravia-connect`](https://pypi.org/project/pybravia-connect/)
+    (`BraviaConnectClient`) for connect / capabilities / GetStates / notify /
+    ExecCommand / app-list / resource reads.
+  - `grpc_discovery.py` — Home Assistant mDNS helpers; TCP port probes come from
+    the library.
   - `coordinator.py`, `entity.py`, `config_flow.py`, and the platform modules
     (`media_player.py`, `select.py`, `number.py`, `switch.py`, `sensor.py`,
     `binary_sensor.py`, `text.py`, `update.py`, `remote.py`).
-- `tests/` — unit tests (see [Testing](#testing)).
+- `tests/` — Home Assistant integration tests (see [Testing](#testing)).
 - `tools/` — developer tooling that runs **outside** Home Assistant.
 - `schema/` — captured capability / state dumps for reference.
 
@@ -263,50 +265,23 @@ pip install -r requirements-dev.txt
 ```
 
 Home Assistant (pulled in by `pytest-homeassistant-custom-component`) does not
-build on Python 3.14 yet, so use **Python 3.13** for the full test suite. The
-pure wire-decode tests run on any Python.
+build on Python 3.14 yet, so use **Python 3.13** for the full test suite.
 
 ### Tools
 
 - `tools/pair_and_enumerate.py` — drives Sony sign-in and gRPC **schema
-  enumeration** outside Home Assistant; the starting point for adding a new
-  model.
+  enumeration** outside Home Assistant via `pybravia-connect`; the starting
+  point for adding a new model.
 - `tools/ha_stub_harness.py` — exercises the real coordinator and entities
   against a **live TV** using lightweight Home Assistant stand-ins, without a
   running HA instance. Edit the `REPO` path at the top to your checkout.
 
-### Regenerating the protobuf stubs
-
-`grpc/bravia_control_pb2*.py` are generated from `grpc/bravia_control.proto`:
-
-```sh
-python -m grpc_tools.protoc -Igrpc --python_out=grpc --grpc_python_out=grpc \
-  grpc/bravia_control.proto
-```
-
-Then re-apply two manual patches (also documented in `requirements-dev.txt`):
-
-1. Make the `pb2_grpc` import relative — `from . import bravia_control_pb2`.
-2. Register the descriptor in a **private** pool, not the global `Default()`
-   one (`_pool = _descriptor_pool.DescriptorPool()` /
-   `DESCRIPTOR = _pool.AddSerializedFile(...)`). This prevents a symbol-name
-   collision in the shared protobuf descriptor pool with a co-installed
-   `bravia_quad` integration, which uses the same proto package — without it,
-   whichever integration loads second fails to import.
-
 ## Testing
 
-Tests live in `tests/` and come in two tiers:
-
-- **Pure wire-decode tests** (`test_notify_decode`, `test_get_states_response`,
-  `test_application_list`, `test_resources`, `test_util`, `test_credentials`)
-  exercise the protocol codecs with no Home Assistant and no network. They run
-  on **any** Python via a synthetic package set up in `conftest.py`.
-- **Home Assistant tests** (`test_config_flow`, `test_coordinator`, `test_init`,
-  `test_entity`, `test_sensor`) use `pytest-homeassistant-custom-component` and
-  cover the config/reauth flow, coordinator seeding + push handling, setup
-  recovery, and entity behaviour. They are `importorskip`-guarded, so on a
-  Python without the HA plugin they skip and the pure tests still run.
+Tests live in `tests/` and use `pytest-homeassistant-custom-component` to cover
+the config/reauth flow, coordinator seeding + push handling, setup recovery,
+and entity behaviour. Protocol wire codecs live in `pybravia-connect` and are
+tested there.
 
 ```sh
 pytest tests/ -q          # run the suite
