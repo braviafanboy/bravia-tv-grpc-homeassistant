@@ -7,16 +7,12 @@ from typing import Any
 
 from pybravia_connect import AuthError, BraviaConnectClient, CapabilityMeta
 from pybravia_connect import ConnectionError as BraviaConnectionError
-from pybravia_connect.wire.notify import APPLICATION_LIST_PATH
-from pybravia_connect.wire.resources import image_content_type
 
 __all__ = [
-    "APPLICATION_LIST_PATH",
     "AuthError",
     "BraviaConnectBackend",
     "BraviaConnectionError",
     "CapabilityMeta",
-    "image_content_type",
 ]
 
 DeltaCallback = Callable[[str, Any], None]

@@ -16,13 +16,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from pybravia_connect import AuthError, CredentialsError, CredentialsRefreshError
-from pybravia_connect import ConnectionError as BraviaConnectionError
-from pybravia_connect import credentials as cred
-from pybravia_connect.credentials import (
+from pybravia_connect import (
+    AuthError,
+    CredentialsError,
+    CredentialsRefreshError,
     async_get_devices,
     async_refresh_access_token,
+    async_refresh_credentials,
+    credentials_to_json,
+    device_hardware_info,
+    parse_credentials_json,
 )
+from pybravia_connect import ConnectionError as BraviaConnectionError
 
 from .bravia_connect_backend import BraviaConnectBackend
 from .const import (
@@ -67,7 +72,7 @@ PLATFORMS: list[Platform] = [
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Bravia TV (gRPC) from a config entry."""
     host = entry.data[CONF_HOST]
-    creds = cred.parse_credentials_json(entry.data[CONF_GRPC_KEYS])
+    creds = parse_credentials_json(entry.data[CONF_GRPC_KEYS])
     device_id = entry.data.get(CONF_GRPC_DEVICE_ID) or creds.get("device_id")
 
     # Record the device's stable mDNS unique id for entries paired before it was
@@ -221,7 +226,7 @@ async def _fetch_device_hardware(
         (d for d in devices if d.get("device_id") == device_id),
         devices[0] if devices else None,
     )
-    return cred.device_hardware_info(device) if device else None
+    return device_hardware_info(device) if device else None
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -274,10 +279,10 @@ async def _refresh_credentials(
 ) -> dict:
     """Fetch fresh Sony session keys and persist them to the config entry."""
     session = async_get_clientsession(hass)
-    new_creds = await cred.async_refresh_credentials(session, creds, device_id)
+    new_creds = await async_refresh_credentials(session, creds, device_id)
     hass.config_entries.async_update_entry(
         entry,
-        data={**entry.data, CONF_GRPC_KEYS: cred.credentials_to_json(new_creds)},
+        data={**entry.data, CONF_GRPC_KEYS: credentials_to_json(new_creds)},
     )
     return new_creds
 

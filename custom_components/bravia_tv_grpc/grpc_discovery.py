@@ -12,8 +12,12 @@ import inspect
 import logging
 from typing import TYPE_CHECKING
 
-from pybravia_connect import discover_grpc_port, is_control_device_service
-from pybravia_connect.discovery import ZEROCONF_TYPE, scan_open_ports
+from pybravia_connect import (
+    ZEROCONF_TYPE,
+    discover_grpc_port,
+    is_control_device_service,
+    scan_open_ports,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant

@@ -28,8 +28,25 @@ import json
 from pathlib import Path
 import sys
 
-from pybravia_connect import BraviaConnectClient, discover_grpc_port
-from pybravia_connect import credentials as cred
+from pybravia_connect import (
+    BraviaConnectClient,
+    build_credentials_bundle,
+    discover_grpc_port,
+    get_device_states,
+    get_devices,
+    get_session_keys,
+    parse_authorization_code,
+    parse_oauth_redirect_state,
+    refresh_access_token,
+    start_oauth_login,
+)
+from pybravia_connect.credentials import (  # private bootstrap helpers
+    _TOKEN_HEADERS,
+    AUTH_BASE_URL,
+    CLIENT_ID,
+    REDIRECT_URI,
+    _sync_post_form,
+)
 
 _REPO = Path(__file__).resolve().parent.parent
 _SCHEMA_DIR = _REPO / "schema"
@@ -47,7 +64,7 @@ def _load(path: Path) -> dict:
 
 
 def cmd_login(_args: argparse.Namespace) -> None:
-    auth_url, code_verifier, state = cred.start_oauth_login()
+    auth_url, code_verifier, state = start_oauth_login()
     _save(_STATE_FILE, {"code_verifier": code_verifier, "state": state})
     print("\n1. Open this URL in a browser and log in with the Sony account")
     print("   that is paired with the TV in the BRAVIA Connect app:\n")
@@ -62,25 +79,26 @@ def cmd_login(_args: argparse.Namespace) -> None:
 
 def cmd_exchange(args: argparse.Namespace) -> None:
     state = _load(_STATE_FILE)
-    redirect_state = cred.parse_oauth_redirect_state(args.redirect)
+    redirect_state = parse_oauth_redirect_state(args.redirect)
     if redirect_state and redirect_state != state["state"]:
         print("ERROR: OAuth state mismatch; re-run login.", file=sys.stderr)
         sys.exit(1)
-    auth_code = cred.parse_authorization_code(args.redirect)
-    token_response = cred._sync_post_form(  # noqa: SLF001 — bootstrap tool
-        f"{cred.AUTH_BASE_URL}/token",
+    auth_code = parse_authorization_code(args.redirect)
+    # Bootstrap tool: token exchange helpers are not all on the public root.
+    token_response = _sync_post_form(  # noqa: SLF001
+        f"{AUTH_BASE_URL}/token",
         {
             "grant_type": "authorization_code",
             "code": auth_code,
-            "redirect_uri": cred.REDIRECT_URI,
-            "client_id": cred.CLIENT_ID,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": CLIENT_ID,
             "code_verifier": state["code_verifier"],
         },
-        cred._TOKEN_HEADERS,  # noqa: SLF001
+        _TOKEN_HEADERS,  # noqa: SLF001
     )
     access_token = token_response["access_token"]
 
-    devices = cred.get_devices(access_token).get("devices", [])
+    devices = get_devices(access_token).get("devices", [])
     if not devices:
         print("ERROR: no Sony IoT devices on this account.", file=sys.stderr)
         sys.exit(1)
@@ -90,9 +108,9 @@ def cmd_exchange(args: argparse.Namespace) -> None:
 
     idx = args.device_index if args.device_index is not None else 0
     device_id = devices[idx]["device_id"]
-    session_keys = cred.get_session_keys(device_id, access_token)
+    session_keys = get_session_keys(device_id, access_token)
     session_keys.setdefault("device_id", device_id)
-    bundle = cred.build_credentials_bundle(session_keys, token_response)
+    bundle = build_credentials_bundle(session_keys, token_response)
     _save(_CREDS_FILE, bundle)
     print(f"\nSaved credentials for device {device_id} -> {_CREDS_FILE}")
     print("Keys present:", sorted(k for k in bundle if "token" not in k.lower()))
@@ -101,10 +119,10 @@ def cmd_exchange(args: argparse.Namespace) -> None:
 
 def _dump_cloud_schema(creds: dict) -> dict:
     """Fetch the Sony IoT cloud state snapshot (full JSON field tree)."""
-    token = cred.refresh_access_token(creds["refresh_token"])
+    token = refresh_access_token(creds["refresh_token"])
     access_token = token["access_token"]
     device_id = creds["device_id"]
-    states = cred.get_device_states(device_id, access_token)
+    states = get_device_states(device_id, access_token)
     _save(_SCHEMA_DIR / "cloud_states.json", states)
     paths: dict[str, str] = {}
 

@@ -18,9 +18,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from pybravia_connect import credentials as cred
+from pybravia_connect import (
+    APPLICATION_LIST_PATH,
+    get_device_states,
+    parse_credentials_json,
+    refresh_access_token,
+)
 
-from .bravia_connect_backend import APPLICATION_LIST_PATH, BraviaConnectBackend
+from .bravia_connect_backend import BraviaConnectBackend
 from .const import CONF_FW_PENDING, CONF_GRPC_KEYS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -312,7 +317,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not keys:
             return
         try:
-            creds = cred.parse_credentials_json(keys)
+            creds = parse_credentials_json(keys)
             snapshot = await self.hass.async_add_executor_job(
                 self._fetch_cloud_states, creds
             )
@@ -339,8 +344,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._state[path] = value
 
     def _fetch_cloud_states(self, creds: dict[str, Any]) -> dict[str, Any]:
-        token = cred.refresh_access_token(creds["refresh_token"])["access_token"]
-        return cred.get_device_states(creds["device_id"], token)
+        token = refresh_access_token(creds["refresh_token"])["access_token"]
+        return get_device_states(creds["device_id"], token)
 
     @callback
     def _apply_delta(self, path: str, value: Any) -> None:

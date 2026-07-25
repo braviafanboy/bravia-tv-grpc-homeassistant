@@ -1,6 +1,6 @@
 # Dev/enumeration tooling (tools/). The HA integration itself declares its
 # runtime deps in manifest.json.
-pybravia-connect==0.1.0a4
+pybravia-connect==0.1.0a7
 cryptography>=42.0.0
 aiohttp>=3.9.0
 

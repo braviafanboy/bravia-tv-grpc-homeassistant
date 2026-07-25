@@ -22,8 +22,8 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from pybravia_connect import image_content_type
 
-from .bravia_connect_backend import image_content_type
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator, _icon_uri
 from .entity import BraviaTvEntity
