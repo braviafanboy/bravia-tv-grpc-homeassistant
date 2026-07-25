@@ -21,7 +21,9 @@ jobs:
           # Keyed on pyproject.toml (distinct from the tests job's key, so the
           # two jobs don't share — and clobber — one cache entry).
           cache-dependency-path: pyproject.toml
-      - run: pip install ruff
+      # Pin ruff: an unpinned install lets a new release add or tighten a rule
+      # and turn CI red with no code change. Bump deliberately.
+      - run: pip install ruff==0.16.0
       - run: ruff check .
       - run: ruff format --check .
 
