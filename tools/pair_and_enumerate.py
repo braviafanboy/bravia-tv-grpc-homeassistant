@@ -30,22 +30,15 @@ import sys
 
 from pybravia_connect import (
     BraviaConnectClient,
-    build_credentials_bundle,
+    credentials_from_oauth,
     discover_grpc_port,
+    exchange_oauth_redirect,
     get_device_states,
     get_devices,
-    get_session_keys,
-    parse_authorization_code,
     parse_oauth_redirect_state,
     refresh_access_token,
     start_oauth_login,
-)
-from pybravia_connect.credentials import (  # private bootstrap helpers
-    _TOKEN_HEADERS,
-    AUTH_BASE_URL,
-    CLIENT_ID,
-    REDIRECT_URI,
-    _sync_post_form,
+    write_credentials,
 )
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -83,18 +76,10 @@ def cmd_exchange(args: argparse.Namespace) -> None:
     if redirect_state and redirect_state != state["state"]:
         print("ERROR: OAuth state mismatch; re-run login.", file=sys.stderr)
         sys.exit(1)
-    auth_code = parse_authorization_code(args.redirect)
-    # Bootstrap tool: token exchange helpers are not all on the public root.
-    token_response = _sync_post_form(  # noqa: SLF001
-        f"{AUTH_BASE_URL}/token",
-        {
-            "grant_type": "authorization_code",
-            "code": auth_code,
-            "redirect_uri": REDIRECT_URI,
-            "client_id": CLIENT_ID,
-            "code_verifier": state["code_verifier"],
-        },
-        _TOKEN_HEADERS,  # noqa: SLF001
+    token_response = exchange_oauth_redirect(
+        args.redirect,
+        state["code_verifier"],
+        expected_state=state["state"],
     )
     access_token = token_response["access_token"]
 
@@ -108,10 +93,9 @@ def cmd_exchange(args: argparse.Namespace) -> None:
 
     idx = args.device_index if args.device_index is not None else 0
     device_id = devices[idx]["device_id"]
-    session_keys = get_session_keys(device_id, access_token)
-    session_keys.setdefault("device_id", device_id)
-    bundle = build_credentials_bundle(session_keys, token_response)
-    _save(_CREDS_FILE, bundle)
+    bundle = credentials_from_oauth(token_response, device_id=device_id)
+    _CREDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    write_credentials(_CREDS_FILE, bundle)
     print(f"\nSaved credentials for device {device_id} -> {_CREDS_FILE}")
     print("Keys present:", sorted(k for k in bundle if "token" not in k.lower()))
     print("\nNext: python tools/pair_and_enumerate.py enumerate --host <TV_IP>")
