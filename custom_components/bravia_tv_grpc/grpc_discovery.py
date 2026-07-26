@@ -1,10 +1,8 @@
 """Discover the BRAVIA TV gRPC ControlDeviceService port.
 
-BRAVIA TVs serve the service on a DYNAMIC port that changes across reboots. We
-locate it by probing candidate TCP ports and confirming the service by RPC
-behaviour: a real method on the
-ControlDeviceService path returns INVALID_ARGUMENT for an empty payload, while
-any other HTTP/2 server returns UNIMPLEMENTED (or fails to speak gRPC at all).
+BRAVIA TVs serve the service on a DYNAMIC port that changes across reboots.
+TCP probe helpers come from ``pybravia-connect``; mDNS browsing stays here
+because it needs Home Assistant's zeroconf integration.
 """
 
 from __future__ import annotations
@@ -12,75 +10,28 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import socket
 from typing import TYPE_CHECKING
 
-import grpc
-
-from .const import GRPC_SERVICE
+from pybravia_connect import (
+    ZEROCONF_TYPE,
+    discover_grpc_port,
+    is_control_device_service,
+    scan_open_ports,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-# The TV advertises the ControlDeviceService (dynamic port) under this mDNS
-# service type — verified on a BRAVIA 8 II (=_sonysmarthome._tcp, port 32915).
-ZEROCONF_TYPE = "_sonysmarthome._tcp.local."
-
-# A registered method used to confirm a candidate port speaks the service.
-_PROBE_METHOD = f"/{GRPC_SERVICE}/GetSessionRandom"
-
-
-def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def scan_open_ports(
-    host: str, ports: range, timeout: float = 0.3, workers: int = 500
-) -> list[int]:
-    """Return the subset of ``ports`` accepting TCP connections on ``host``.
-
-    Closed ports refuse immediately; only filtered ports wait the full timeout,
-    so a high worker count keeps a full-range scan to a few tens of seconds.
-    """
-    from concurrent.futures import ThreadPoolExecutor
-
-    open_ports: list[int] = []
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = pool.map(lambda p: (p, _port_open(host, p, timeout)), ports)
-        open_ports = [p for p, is_open in results if is_open]
-    return open_ports
-
-
-def is_control_device_service(host: str, port: int, timeout: float = 3.0) -> bool:
-    """Return True if ``host:port`` hosts the Sony ControlDeviceService.
-
-    Distinguishes the real service (registered method → INVALID_ARGUMENT on an
-    empty request) from an unrelated HTTP/2 server (→ UNIMPLEMENTED).
-    """
-    channel = grpc.insecure_channel(f"{host}:{port}")
-    try:
-        grpc.channel_ready_future(channel).result(timeout=timeout)
-        call = channel.unary_unary(_PROBE_METHOD)
-        try:
-            call(b"", timeout=timeout)
-        except grpc.RpcError as err:
-            code = err.code()
-            if code == grpc.StatusCode.INVALID_ARGUMENT:
-                return True
-            _LOGGER.debug("Port %s not the service: %s", port, code)
-            return False
-        # A success on an empty payload would be unexpected but still the service.
-        return True
-    except (grpc.FutureTimeoutError, grpc.RpcError):
-        return False
-    finally:
-        channel.close()
+__all__ = [
+    "ZEROCONF_TYPE",
+    "async_discover_port_mdns",
+    "async_resolve_device_mdns",
+    "discover_grpc_port",
+    "is_control_device_service",
+    "scan_open_ports",
+]
 
 
 async def _async_find_service_info(hass: HomeAssistant, host: str, timeout: float):
@@ -159,32 +110,3 @@ async def async_resolve_device_mdns(
             v = "" if value is None else str(value)
         props[k] = v
     return info.port, info.name or "", props
-
-
-def discover_grpc_port(
-    host: str,
-    candidate_ports: tuple[int, ...] = (),
-    scan_range: range | None = None,
-) -> int | None:
-    """Locate the gRPC control port on ``host``.
-
-    Tries ``candidate_ports`` first (e.g. the previously-resolved port), then
-    (optionally) probes every open port in ``scan_range`` until one answers as
-    the ControlDeviceService. The TV's port is dynamic, so there is no useful
-    fixed default to probe.
-    """
-    for port in candidate_ports:
-        if _port_open(host, port) and is_control_device_service(host, port):
-            _LOGGER.info("Found ControlDeviceService on %s:%s", host, port)
-            return port
-
-    if scan_range is None:
-        return None
-
-    for port in scan_open_ports(host, scan_range):
-        if port in candidate_ports:
-            continue
-        if is_control_device_service(host, port):
-            _LOGGER.info("Discovered ControlDeviceService on %s:%s", host, port)
-            return port
-    return None

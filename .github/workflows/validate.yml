@@ -51,7 +51,7 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      # pytest-homeassistant-custom-component pulls HA (config-flow/coordinator
-      # tests); grpcio/protobuf are the integration's runtime deps.
-      - run: pip install pytest-homeassistant-custom-component grpcio protobuf cryptography
+      # requirements-dev.txt pins pybravia-connect + cryptography and pulls HA
+      # via pytest-homeassistant-custom-component.
+      - run: pip install -r requirements-dev.txt
       - run: pytest tests/ -q

@@ -22,11 +22,11 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from pybravia_connect import image_content_type
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator, _icon_uri
 from .entity import BraviaTvEntity
-from .grpc.resources import image_content_type
 from .util import parse_json_value, source_label
 
 _LOGGER = logging.getLogger(__name__)

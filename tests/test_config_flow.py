@@ -200,12 +200,16 @@ async def test_zeroconf_soundbar_suppressed_by_model(hass: HomeAssistant) -> Non
 async def test_zeroconf_soundbar_rejected(hass: HomeAssistant) -> None:
     """Backstop: a soundbar whose model the mDNS check can't see still aborts
     after sign-in, once the cloud device_type is known."""
-    from custom_components.bravia_tv_grpc.grpc.credentials import GrpcNotATvError
+    from pybravia_connect import DeviceSelectError
 
     result = await _init_zeroconf(hass, _SB_NAME, "192.0.2.20", 55051)
     assert result["step_id"] == "oauth"
 
-    mock = AsyncMock(side_effect=GrpcNotATvError("Speaker", "BRAVIA Theatre Quad"))
+    mock = AsyncMock(
+        side_effect=DeviceSelectError(
+            "Device unique_id='bac76409' has type 'Speaker', expected 'TV'"
+        )
+    )
     with patch(f"{CF}.async_complete_oauth_flow", new=mock):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"redirect_url": "ssh-app://signin?code=x"}
