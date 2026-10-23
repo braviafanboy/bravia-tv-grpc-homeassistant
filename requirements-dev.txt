@@ -1,7 +1,7 @@
 # Dev/enumeration tooling (tools/pair_and_enumerate.py). The HA integration
 # itself declares its runtime deps in manifest.json.
 grpcio>=1.76.0
-protobuf>=4.0.0
+protobuf>=6.31.1
 aiohttp>=3.9.0
 
 # Unit tests (tests/). pytest + cryptography run the pure wire-decode tests on
