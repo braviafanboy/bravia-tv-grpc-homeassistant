@@ -8,3 +8,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # These are pinned by pytest-homeassistant-custom-component (i.e. by the
+      # Home Assistant release under test), so raising our floor can only make
+      # the install unresolvable. protobuf's floor is also the manifest's
+      # minimum (matches the generated pb2 code); change it by hand with that.
+      - dependency-name: aiohttp
+      - dependency-name: cryptography
+      - dependency-name: protobuf
+      - dependency-name: pytest
