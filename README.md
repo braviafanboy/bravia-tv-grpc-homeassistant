@@ -69,7 +69,10 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   selects: Speakers (TV / audio system) and Bluetooth.
 - **`number`** — Volume, Brightness, TV Speaker / Bluetooth / HDMI-output
   volumes, Voice Zoom, and Rear Speaker / Subwoofer levels for **Direct Connect**
-  wireless BRAVIA Theatre speakers paired straight to the TV.
+  wireless BRAVIA Theatre speakers paired straight to the TV. On a new install
+  the rear / subwoofer levels start **disabled** if the TV reports no such
+  speaker was ever paired; if you pair them later, enable the two entities under
+  **Settings → Devices & Services → Entities**.
 - **`switch`** — Power, Mute, Bluetooth 3D Surround, Calibrated Picture Mode.
 - **`sensor`** — Video Signal (e.g. “4K 24fps Dolby Vision”), Audio Signal (e.g.
   “5.1 Surround Dolby Atmos”, or “PCM” for app audio), App (foreground app /

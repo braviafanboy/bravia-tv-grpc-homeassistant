@@ -83,6 +83,55 @@ async def test_media_player_duplicates_disabled_by_default(hass: HomeAssistant) 
     await coordinator.async_shutdown()
 
 
+async def test_rear_sub_disabled_only_until_speakers_paired(
+    hass: HomeAssistant,
+) -> None:
+    """Direct Connect rear/sub levels are disabled by default only while the TV
+    reports no such speaker was ever paired; otherwise they stay enabled."""
+    from custom_components.bravia_tv_grpc.number import BraviaTvNumber
+
+    def make(coordinator, path: str, key: str) -> BraviaTvNumber:
+        return BraviaTvNumber(coordinator, path, key, "mdi:speaker")
+
+    rear = "sound_setting.volume.rear"
+    sub = "sound_setting.volume.subwoofer"
+
+    # Never paired: nothing could use the control, so it's off on a fresh install.
+    unpaired = _coordinator(hass)
+    await unpaired.async_start()
+    unpaired._apply_delta(f"{rear}.unavailable_reason", "no_connection_history")
+    unpaired._apply_delta(f"{sub}.unavailable_reason", "no_connection_history")
+    assert (
+        make(unpaired, rear, "rear_speaker_volume").entity_registry_enabled_default
+        is False
+    )
+    assert (
+        make(unpaired, sub, "subwoofer_volume").entity_registry_enabled_default is False
+    )
+    await unpaired.async_shutdown()
+
+    # Paired (reason cleared): enabled by default.
+    paired = _coordinator(hass)
+    await paired.async_start()
+    paired._apply_delta(f"{rear}.unavailable_reason", "none")
+    paired._apply_delta(f"{sub}.unavailable_reason", "none")
+    assert (
+        make(paired, rear, "rear_speaker_volume").entity_registry_enabled_default
+        is True
+    )
+    assert make(paired, sub, "subwoofer_volume").entity_registry_enabled_default is True
+    await paired.async_shutdown()
+
+    # State not known yet: fall back to enabled rather than hiding a control.
+    unknown = _coordinator(hass)
+    await unknown.async_start()
+    assert (
+        make(unknown, rear, "rear_speaker_volume").entity_registry_enabled_default
+        is True
+    )
+    await unknown.async_shutdown()
+
+
 async def test_writable_entity_gated_by_unavailable_reason(hass: HomeAssistant) -> None:
     coordinator = _coordinator(hass)
     await coordinator.async_start()

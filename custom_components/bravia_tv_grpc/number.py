@@ -47,6 +47,18 @@ _DISABLED_BY_DEFAULT = {
     "sound_setting.volume.tv_speaker",
 }
 
+# Disabled by default only while the TV reports no such speaker has ever been
+# paired (unavailable_reason no_connection_history): then the control can't work
+# and would just sit unavailable. Evaluated once, when the entity is first
+# registered, so an install that already has the speakers paired gets it enabled.
+# HA never re-enables a disabled entity when it later becomes available, so
+# after pairing speakers later the user has to enable these by hand.
+_DISABLED_UNTIL_PAIRED = {
+    "sound_setting.volume.rear",
+    "sound_setting.volume.subwoofer",
+}
+_NEVER_PAIRED = "no_connection_history"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -78,7 +90,11 @@ class BraviaTvNumber(BraviaTvEntity, NumberEntity):
         super().__init__(coordinator, grpc_path)
         self._attr_translation_key = translation_key
         self._attr_icon = icon
-        if grpc_path in _DISABLED_BY_DEFAULT:
+        if grpc_path in _DISABLED_BY_DEFAULT or (
+            grpc_path in _DISABLED_UNTIL_PAIRED
+            and (coordinator.data or {}).get(f"{grpc_path}.unavailable_reason")
+            == _NEVER_PAIRED
+        ):
             self._attr_entity_registry_enabled_default = False
         meta = coordinator.client.capabilities.get(grpc_path)
         if meta is not None and meta.min is not None:
