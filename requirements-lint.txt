@@ -1,3 +1,3 @@
 # Linter for CI (the lint job). Pinned so a new release cannot turn CI red
 # with no code change; Dependabot proposes bumps.
-ruff==0.16.0
+ruff==0.17.1
