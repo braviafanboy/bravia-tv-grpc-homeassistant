@@ -8,7 +8,7 @@ aiohttp>=3.9.0
 # any Python; pytest-homeassistant-custom-component pulls Home Assistant and
 # runs the config-flow/coordinator tests (Python 3.13; HA doesn't build on 3.14).
 pytest>=8.0.0
-cryptography>=42.0.0
+cryptography>=50.0.2
 pytest-homeassistant-custom-component
 
 # Regenerating grpc/bravia_control_pb2*.py from grpc/bravia_control.proto:
