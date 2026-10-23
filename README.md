@@ -135,8 +135,8 @@ is authoritative):
   and the local gRPC connection). Reserve a **static IP** for the TV on your
   router so it doesn't move.
 - **Home Assistant 2025.2 or newer.**
-- `grpcio`, `protobuf` and `cryptography` are installed automatically (declared
-  in the manifest); no manual dependency setup is required.
+- `grpcio` and `protobuf` are installed automatically (declared in the manifest);
+  no manual dependency setup is required.
 
 ### 1. Add the repository (HACS)
 

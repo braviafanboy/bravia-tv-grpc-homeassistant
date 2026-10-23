@@ -14,10 +14,9 @@
   "issue_tracker": "https://github.com/braviafanboy/bravia-tv-grpc-homeassistant/issues",
   "requirements": [
     "grpcio>=1.76.0",
-    "protobuf>=6.31.1",
-    "cryptography>=42.0.0"
+    "protobuf>=6.31.1"
   ],
-  "version": "0.1.10",
+  "version": "0.1.9",
   "zeroconf": [
     "_sonysmarthome._tcp.local."
   ]
