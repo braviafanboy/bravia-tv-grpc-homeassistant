@@ -22,4 +22,4 @@ pytest-homeassistant-custom-component
 #      names from colliding in the shared descriptor pool with a co-installed
 #      bravia_quad integration, which uses the same proto package.
 # Pinned so the emitted runtime-version guard matches HA's protobuf (6.31.x).
-grpcio-tools>=1.74,<1.75
+grpcio-tools>=1.84.0,<1.85
