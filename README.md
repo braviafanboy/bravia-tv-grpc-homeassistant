@@ -140,10 +140,20 @@ is authoritative):
 
 ### 1. Add the repository (HACS)
 
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=braviafanboy&repository=bravia-tv-grpc-homeassistant&category=integration)
+
+Click the badge above (it opens HACS on your own Home Assistant), or:
+
 1. In HACS, search for **Bravia TV (gRPC)** and download it.
 2. **Restart Home Assistant**.
 
 ### 2. Add your TV
+
+After the restart, this badge starts the setup flow directly:
+
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=bravia_tv_grpc)
+
+Or by hand:
 
 3. Go to **Settings → Devices & Services**.
    - If the TV was **auto-discovered**, a *Bravia TV (gRPC)* card appears — click
@@ -219,10 +229,15 @@ sign-in. The config dialog shows a **"Sign in to Sony"** step with a link and a
 
 ## Blueprints
 
-HACS only installs the integration, so blueprints are copied by hand. Download
+HACS only installs the integration, so blueprints are imported separately.
+This badge imports the blueprint into your Home Assistant:
+
+[![Open your Home Assistant instance and show the blueprint import dialog with this blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fbraviafanboy%2Fbravia-tv-grpc-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbraviafanboy%2Fbravia_sound_by_audio_format.yaml)
+
+Or copy
 [`bravia_sound_by_audio_format.yaml`](blueprints/automation/braviafanboy/bravia_sound_by_audio_format.yaml)
-into `config/blueprints/automation/braviafanboy/` and it appears under
-**Settings → Automations & Scenes → Blueprints**.
+into `config/blueprints/automation/braviafanboy/` yourself. Either way it appears
+under **Settings → Automations & Scenes → Blueprints**.
 
 - **Sound Settings by Audio Format** — runs sound settings (for example a
   soundbar's Sound Field or Night Mode) when the **Audio Signal** sensor matches
