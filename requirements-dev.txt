@@ -7,7 +7,7 @@ aiohttp>=3.9.0
 # Unit tests (tests/). pytest + cryptography run the pure wire-decode tests on
 # any Python; pytest-homeassistant-custom-component pulls Home Assistant and
 # runs the config-flow/coordinator tests (Python 3.13; HA doesn't build on 3.14).
-pytest>=8.0.0
+pytest>=9.1.1
 cryptography>=42.0.0
 pytest-homeassistant-custom-component
 
