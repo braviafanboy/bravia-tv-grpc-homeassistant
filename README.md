@@ -217,6 +217,18 @@ sign-in. The config dialog shows a **"Sign in to Sony"** step with a link and a
   integration re-discovers the new port and refreshes its keys on its own. Allow
   a minute or two while the TV boots (see *Reboot & reconnect resilient* above).
 
+## Blueprints
+
+HACS only installs the integration, so blueprints are copied by hand. Download
+[`bravia_sound_by_audio_format.yaml`](blueprints/automation/braviafanboy/bravia_sound_by_audio_format.yaml)
+into `config/blueprints/automation/braviafanboy/` and it appears under
+**Settings → Automations & Scenes → Blueprints**.
+
+- **Sound Settings by Audio Format** — runs sound settings (for example a
+  soundbar's Sound Field or Night Mode) when the **Audio Signal** sensor matches
+  the formats you list, such as `Dolby Atmos` or `PCM`. Create one automation
+  per format profile.
+
 ## Contributing
 
 Issues and pull requests are welcome. A few guidelines:

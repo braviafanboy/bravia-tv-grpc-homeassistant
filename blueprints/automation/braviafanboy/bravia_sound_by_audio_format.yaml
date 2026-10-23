@@ -1,0 +1,118 @@
+blueprint:
+  name: BRAVIA — Sound Settings by Audio Format
+  author: braviafanboy
+  homeassistant:
+    min_version: "2025.2.0"
+  description: >
+    Adjust sound settings whenever the audio format on a Sony BRAVIA TV changes.
+
+
+    Watch the **Audio Signal** sensor from the *Bravia TV (gRPC)* integration
+    (e.g. `PCM`, `Dolby Atmos`, `DTS:X`, `5.1 Surround Dolby Atmos`) and, when it
+    matches the format(s) you list, run the sound settings you configure. The
+    settings can target the *BRAVIA Theatre* soundbar entities (Sound Field,
+    Night Mode, DSEE Ultimate, Voice Zoom, Subwoofer / Rear level, Dynamic Range
+    Compressor, …) as well as the TV's own sound controls.
+
+
+    Create one automation per format profile, e.g. *Dolby Atmos / DTS:X → Sound
+    Field on, Night Mode off* and *PCM (music/stereo) → Sound Field off*.
+  domain: automation
+  input:
+    trigger_section:
+      name: When this audio format is active
+      icon: mdi:surround-sound
+      collapsed: false
+      input:
+        audio_signal_sensor:
+          name: Audio Signal sensor
+          description: >
+            The Bravia TV (gRPC) **Audio Signal** sensor (e.g.
+            `sensor.<tv>_audio_signal`).
+          selector:
+            entity:
+              integration: bravia_tv_grpc
+              domain: sensor
+        audio_formats:
+          name: Audio format(s)
+          description: >
+            Activate this profile when the Audio Signal matches one of these,
+            e.g. `Dolby Atmos`, `DTS:X`, `Dolby Digital+`, `PCM`. With match mode
+            "contains" (the default), `Dolby Atmos` also matches composed states
+            like `5.1 Surround Dolby Atmos`.
+          selector:
+            text:
+              multiple: true
+        match_mode:
+          name: Match mode
+          description: >
+            "contains" matches when the format text appears anywhere in the
+            sensor state (recommended, handles the channel-layout prefix).
+            "exact" requires the whole state to equal one of the values.
+          default: contains
+          selector:
+            select:
+              options:
+                - label: Contains (substring)
+                  value: contains
+                - label: Exact match
+                  value: exact
+        settle_time:
+          name: Settle time
+          description: >
+            Wait this long after the format stops changing before applying, to
+            ride out brief transitions when playback starts or seeks.
+          default:
+            seconds: 5
+          selector:
+            duration: {}
+    apply_section:
+      name: Sound settings to apply
+      icon: mdi:tune-vertical
+      collapsed: false
+      input:
+        apply_action:
+          name: Apply these sound settings
+          description: >
+            The sound settings for this format. The default shows an immersive
+            example targeting the Theatre Quad — edit the entity IDs / values to
+            match your setup, or replace it entirely. Common targets:
+            `switch.<quad>_sound_field`, `switch.<quad>_night_mode`,
+            `switch.<quad>_dsee_ultimate`, `number.<quad>_subwoofer_level`,
+            `select.<quad>_dynamic_range_compressor`, plus any TV sound entity.
+          default:
+            - action: switch.turn_on
+              target:
+                entity_id: switch.living_room_bravia_theatre_quad_sound_field
+            - action: switch.turn_off
+              target:
+                entity_id: switch.living_room_bravia_theatre_quad_night_mode
+          selector:
+            action: {}
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  audio_signal_entity: !input audio_signal_sensor
+  audio_formats: !input audio_formats
+  match_mode: !input match_mode
+
+triggers:
+  - trigger: state
+    entity_id: !input audio_signal_sensor
+    for: !input settle_time
+
+conditions:
+  - condition: template
+    value_template: >-
+      {% set cur = states(audio_signal_entity) %}
+      {% if cur in ['unknown', 'unavailable', 'none', ''] %}
+        false
+      {% elif match_mode == 'exact' %}
+        {{ cur in audio_formats }}
+      {% else %}
+        {{ audio_formats | select('in', cur) | list | count > 0 }}
+      {% endif %}
+
+actions: !input apply_action
