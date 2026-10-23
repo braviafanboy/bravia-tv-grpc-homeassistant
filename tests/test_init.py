@@ -58,6 +58,8 @@ def _entry(hass: HomeAssistant):
 async def _run_setup(hass, entry, *, connect_side_effect, refresh_side_effect):
     with (
         patch(f"{INTG}._resolve_port", new=AsyncMock(return_value=12345)),
+        # Real mDNS would open a zeroconf socket, which the test harness forbids.
+        patch(f"{INTG}.async_resolve_device_mdns", new=AsyncMock(return_value=None)),
         patch(
             f"{INTG}.cred.parse_credentials_json",
             return_value={"device_id": "dev", "hmac_key": "ab"},

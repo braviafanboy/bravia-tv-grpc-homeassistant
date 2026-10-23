@@ -1,12 +1,14 @@
 # Dev/enumeration tooling (tools/pair_and_enumerate.py). The HA integration
-# itself declares its runtime deps in manifest.json.
-grpcio>=1.76.0
+# itself declares its runtime deps in manifest.json; keep the grpcio/protobuf
+# floors here equal to the manifest's (they are the generated code's minimums:
+# the pb2_grpc guard needs grpcio>=1.74.0, the pb2 needs protobuf>=6.31.1).
+grpcio>=1.74.0
 protobuf>=6.31.1
 aiohttp>=3.9.0
 
 # Unit tests (tests/). pytest + cryptography run the pure wire-decode tests on
 # any Python; pytest-homeassistant-custom-component pulls Home Assistant and
-# runs the config-flow/coordinator tests (Python 3.13; HA doesn't build on 3.14).
+# runs the config-flow/coordinator tests (3.13 resolves HA <= 2026.2, 3.14 current HA).
 pytest>=8.0.0
 cryptography>=42.0.0
 pytest-homeassistant-custom-component
@@ -22,4 +24,6 @@ pytest-homeassistant-custom-component
 #      names from colliding in the shared descriptor pool with a co-installed
 #      bravia_quad integration, which uses the same proto package.
 # Pinned so the emitted runtime-version guard matches HA's protobuf (6.31.x).
+# This sets the generated code's minimum grpcio/protobuf, hence the manifest's
+# floors; do not bump it casually (Dependabot ignores it for that reason).
 grpcio-tools>=1.74,<1.75

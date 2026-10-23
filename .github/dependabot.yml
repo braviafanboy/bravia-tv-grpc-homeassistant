@@ -17,3 +17,8 @@ updates:
       - dependency-name: cryptography
       - dependency-name: protobuf
       - dependency-name: pytest
+      # grpcio's floor is the manifest minimum and must stay installable
+      # against HA's pinned grpcio. grpcio-tools sets the generated code's
+      # minimum versions (see requirements-dev.txt).
+      - dependency-name: grpcio
+      - dependency-name: grpcio-tools

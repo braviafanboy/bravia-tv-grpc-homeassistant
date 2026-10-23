@@ -45,13 +45,19 @@ jobs:
           category: integration
 
   tests:
-    name: Tests
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the newest Python for the oldest supported HA (2025.11);
+        # HA 2026.3+ requires 3.14, so 3.14 tests current HA.
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: requirements-dev.txt
       # requirements-dev.txt carries the runtime deps (grpcio/protobuf, kept in

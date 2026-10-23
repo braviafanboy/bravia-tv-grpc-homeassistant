@@ -1,6 +1,6 @@
 {
   "name": "Bravia TV (gRPC)",
   "render_readme": true,
-  "homeassistant": "2025.2.0",
+  "homeassistant": "2025.11.0",
   "content_in_root": false
 }

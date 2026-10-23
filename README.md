@@ -134,7 +134,7 @@ is authoritative):
 - Home Assistant and the TV should be on the **same subnet** (for mDNS discovery
   and the local gRPC connection). Reserve a **static IP** for the TV on your
   router so it doesn't move.
-- **Home Assistant 2025.2 or newer.**
+- **Home Assistant 2025.11 or newer.**
 - `grpcio` and `protobuf` are installed automatically (declared in the manifest);
   no manual dependency setup is required.
 
