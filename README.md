@@ -50,17 +50,20 @@ and different value encodings — all handled here.
 - **Diagnostics & recovery.** Redacted config-entry / device diagnostics, plus
   standard Home Assistant repair and re-authentication prompts when the TV needs
   attention (see [Troubleshooting](#troubleshooting)).
-- **Cloud-only controls, via the Sony cloud.** A few TV functions — the sleep
-  timer, Picture Off and playback transport — exist only on the capability set
-  the TV registers with Sony's cloud, the channel the BRAVIA Connect app itself
-  uses for them. They are offered through the same Sony sign-in, with the TV's
-  result read back after each command. See
+- **Cloud-only controls, via the Sony cloud.** Some TV functions — the sleep
+  timer, Picture Off, playback transport and seek, channel by number, deep
+  links into apps, Living Decor themes, on-screen search and waking the TV
+  from standby — exist only on the capability set the TV registers with
+  Sony's cloud, the channel the BRAVIA Connect app itself uses for them. They
+  are offered through the same Sony sign-in, with the TV's result read back
+  after each command, and need internet access. See
   [Cloud-backed controls](#cloud-backed-controls).
 
 ## Entities
 
 Generated from the device capability schema; the exact set depends on the model
-and current context. On a BRAVIA 8 II this is roughly 35 entities.
+and current context. On a BRAVIA 8 II this is roughly 40 entities, a few of
+them disabled by default.
 
 - **`media_player`** (the primary device entity) — power, volume (set / step),
   mute, and **source selection** across HDMI/external inputs and installed apps
@@ -142,10 +145,13 @@ minutes so a sleep timer set with the TV remote shows up within that time.
 `tools/cloud_command_probe.py` exercises any cloud capability from the
 command line.
 
-Verified on a BRAVIA 8 II: the sleep timer, Picture Off, playback and seek
-commands all execute and report back through the cloud within a second or
+Verified on a BRAVIA 8 II: the sleep timer, Picture Off, playback, seek,
+deep links, Living Decor themes, search, speaker type and the standby
+power-on all execute and report back through the cloud within a second or
 two (seek and the transport controls were checked against a playing YouTube
-video). On other models, `tools/cloud_command_probe.py caps` shows what the TV
+video). Channel tuning reaches the tuner but was not tested with channels
+installed, and release notes depend on Sony's page for a pending update. On
+other models, `tools/cloud_command_probe.py caps` shows what the TV
 advertises and `send <name> set <value>` exercises one capability.
 
 ## Soundbar control is out of scope
@@ -201,6 +207,9 @@ is authoritative):
   and the local gRPC connection). Reserve a **static IP** for the TV on your
   router so it doesn't move.
 - **Home Assistant 2025.11 or newer.**
+- **Internet access** is needed only for the
+  [cloud-backed controls](#cloud-backed-controls); everything else works on
+  the local network.
 - `grpcio` and `protobuf` are installed automatically (declared in the manifest);
   no manual dependency setup is required.
 
@@ -292,6 +301,12 @@ sign-in. The config dialog shows a **"Sign in to Sony"** step with a link and a
 - **Entities go unavailable after a TV reboot** — no action needed; the
   integration re-discovers the new port and refreshes its keys on its own. Allow
   a minute or two while the TV boots (see *Reboot & reconnect resilient* above).
+- **A cloud-backed control reports "Could not send … through the Sony
+  cloud"** — the TV needs internet access and Sony's cloud has to be
+  reachable; the local entities keep working regardless. "The TV rejected the
+  cloud command" means the TV received it but could not act on it in its
+  current state (for example seek with no media playing, or the Accessibility
+  Service before its one-time setup).
 
 ## Blueprints
 
@@ -339,8 +354,9 @@ Issues and pull requests are welcome. A few guidelines:
   - `grpc/` — the protocol layer: the Sony Seeds auth handshake, protobuf wire
     codecs (`wire.py`, `notify_decode.py`, `get_states_response.py`, …) and the
     `GetStates` / `StartNotifyStates` / `GetCapabilities` readers plus the
-    nonce-gated, AES-GCM app-list / resource readers. The wire-decode modules
-    are pure (no Home Assistant, no grpcio) and are what the unit tests exercise.
+    nonce-gated, AES-GCM app-list / resource readers, plus `cloud_commands.py`,
+    the Sony cloud command client. The wire-decode and cloud modules are pure
+    (no Home Assistant, no grpcio) and are what the unit tests exercise.
   - `coordinator.py`, `entity.py`, `config_flow.py`, and the platform modules
     (`media_player.py`, `select.py`, `number.py`, `switch.py`, `sensor.py`,
     `binary_sensor.py`, `text.py`, `update.py`, `remote.py`).
