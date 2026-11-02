@@ -67,8 +67,8 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   (Netflix, Twitch, Disney+, …). Includes a browsable grid of installed apps
   with icons (tap to launch) and now-playing artwork for the foreground app.
   Source reflects the active input, or the foreground app when one is running.
-  Play / pause / stop / next / previous are offered when the TV advertises
-  playback control to the Sony cloud (see
+  Play / pause / stop / next / previous and seek are offered when the TV
+  advertises playback control to the Sony cloud (see
   [Cloud-backed controls](#cloud-backed-controls)).
 - **`remote`** — `remote.send_command` for the TV's keys: Sony on-screen
   shortcut menus (Quick Settings, Audio, Guide, App Menu, Menu, TV), D-pad
@@ -111,6 +111,7 @@ all:
 | `sleep_timer` | `select` Sleep Timer | off / 15 / 30 / 45 / 60 / 90 / 120 min; the TV clears it when powered off |
 | `picture` | `switch` Picture | off = *Picture Off* (panel dark, audio continues) |
 | `playback` | `media_player` play / pause / stop / next / previous | drives the foreground app's media session |
+| `seek` | `media_player` seek | absolute position in seconds; needs an app with an active media session |
 
 These are sent through the same Sony account the integration already signs in
 with: a command is posted to Sony's IoT API, Sony delivers it to the TV, and
@@ -122,9 +123,10 @@ cloud-only capabilities (seek, deep links, channel selection, search, D-pad,
 on-screen shortcuts) are reachable the same way but have no entity yet;
 `tools/cloud_command_probe.py` exercises any of them from the command line.
 
-Verified on a BRAVIA 8 II: the sleep timer, Picture Off and playback
+Verified on a BRAVIA 8 II: the sleep timer, Picture Off, playback and seek
 commands all execute and report back through the cloud within a second or
-two. On other models, `tools/cloud_command_probe.py caps` shows what the TV
+two (seek and the transport controls were checked against a playing YouTube
+video). On other models, `tools/cloud_command_probe.py caps` shows what the TV
 advertises and `send <name> set <value>` exercises one capability.
 
 ## Soundbar control is out of scope

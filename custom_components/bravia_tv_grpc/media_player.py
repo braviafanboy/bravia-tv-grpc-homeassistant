@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import BraviaTvCoordinator, _icon_uri
+from .coordinator import BraviaTvCoordinator, _icon_uri, cloud_path
 from .entity import BraviaTvEntity
 from .grpc import cloud_commands as cloud
 from .grpc.resources import image_content_type
@@ -54,6 +54,9 @@ _VOLUME_STEP = 0.02
 # play/pause). It is a cloud-only capability: ``playback`` set to one of
 # playing / paused / stopped / previous / next, delivered via the Sony cloud.
 _PLAYBACK = "playback"
+# Cloud-only absolute seek: ``set`` takes seconds; the TV reports the resulting
+# position in milliseconds. Needs an app with an active media session.
+_SEEK = "seek"
 
 
 async def async_setup_entry(
@@ -111,6 +114,8 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
                 | MediaPlayerEntityFeature.NEXT_TRACK
                 | MediaPlayerEntityFeature.PREVIOUS_TRACK
             )
+        if coordinator.cloud_supports(_SEEK):
+            features |= MediaPlayerEntityFeature.SEEK
         self._attr_supported_features = features
 
         vol_meta = caps.get(_VOLUME)
@@ -322,3 +327,14 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
 
     async def async_media_previous_track(self) -> None:
         await self._async_playback("previous")
+
+    @property
+    def media_position(self) -> int | None:
+        """Position (s) the TV last reported after a seek; None otherwise."""
+        value = self._state.get(cloud_path(_SEEK))
+        return int(value) // 1000 if isinstance(value, int | float) else None
+
+    async def async_media_seek(self, position: float) -> None:
+        await self.coordinator.async_cloud_command(
+            _SEEK, [cloud.set_command(_SEEK, int(position))]
+        )
