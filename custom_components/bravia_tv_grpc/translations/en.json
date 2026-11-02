@@ -66,6 +66,9 @@
       },
       "picture": {
         "name": "Picture"
+      },
+      "accessibility_service": {
+        "name": "Accessibility Service"
       }
     },
     "number": {

@@ -91,9 +91,10 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   speaker was ever paired; if you pair them later, enable the two entities under
   **Settings → Devices & Services → Entities**.
 - **`switch`** — Power, Mute, Bluetooth 3D Surround, Calibrated Picture Mode,
-  and Picture (cloud-backed: off = the TV's *Picture Off*, screen dark with
-  audio playing). Power-on falls back to the Sony cloud when the local write
-  fails, which wakes a TV in standby.
+  Picture (cloud-backed: off = the TV's *Picture Off*, screen dark with audio
+  playing) and Accessibility Service (cloud-backed, disabled by default; see
+  below). Power-on falls back to the Sony cloud when the local write fails,
+  which wakes a TV in standby.
 - **`sensor`** — Video Signal (e.g. “4K 24fps Dolby Vision”), Audio Signal (e.g.
   “5.1 Surround Dolby Atmos”, or “PCM” for app audio), App (foreground app /
   active input), App List (installed apps), Bluetooth Device (connected audio
@@ -126,6 +127,7 @@ all:
 | `select_media` | `media_player.play_media` with `media_content_type: theme` | shows a Living Decor theme, e.g. `theme://skyview` (the ids are not listed by the TV; `theme://skyview`, `theme://naturalandscape`, `theme://monochrome` on a BRAVIA 8 II) |
 | `search` | `bravia_tv_grpc.search` service on the media player | shows Sony's on-screen search results for a query (`play: true` asks the TV to play the best match); takes over the screen and audio focus |
 | `speaker_type` | `select` Speaker Type | TV / audio system (disabled by default) |
+| `access_shortcut` | `switch` Accessibility Service | turns the accessibility service assigned to the TV's shortcut (TalkBack by default) on or off. Works only after the shortcut has been set up once on the TV by holding **Mute** for 3 seconds on the remote; until then the TV rejects it with a toast. Optimistic (the TV does not report it) and disabled by default |
 | `power` | power-on fallback | used only when the local write fails, e.g. the TV is in standby |
 
 These are sent through the same Sony account the integration already signs in

@@ -35,13 +35,18 @@ _DISABLED_BY_DEFAULT: frozenset[str] = frozenset({"power", "mute"})
 # Cloud-only bool capabilities: cloud name -> (translation key, icon).
 # picture: True = picture on; False = "Picture off" (screen dark, audio keeps
 # playing) -- the TV's own Picture Off function, reachable only via the cloud.
-# access_shortcut (the accessibility shortcut) is advertised too, but the
-# BRAVIA 8 II answers every write with an internal error and never reports
-# it back, so it is deliberately not exposed.
+# access_shortcut enables / disables the accessibility service assigned to the
+# TV's accessibility shortcut (TalkBack by default). It only works after that
+# shortcut has been set up once on the TV (hold Mute for 3 s on the remote);
+# before that every write fails with a toast, and the cloud cannot tell. The
+# TV never reports it back, so the switch is optimistic. Opt-in: disabled by
+# default.
 _CLOUD_SWITCHES: dict[str, tuple[str, str]] = {
     "picture": ("picture", "mdi:television-ambient-light"),
+    "access_shortcut": ("accessibility_service", "mdi:human"),
 }
-_CLOUD_ASSUMED_STATE: frozenset[str] = frozenset()
+_CLOUD_ASSUMED_STATE: frozenset[str] = frozenset({"access_shortcut"})
+_CLOUD_DISABLED_BY_DEFAULT: frozenset[str] = frozenset({"access_shortcut"})
 
 
 async def async_setup_entry(
@@ -80,6 +85,8 @@ class BraviaTvCloudSwitch(BraviaTvCloudEntity, SwitchEntity):
         self._attr_icon = icon
         if cloud_name in _CLOUD_ASSUMED_STATE:
             self._attr_assumed_state = True
+        if cloud_name in _CLOUD_DISABLED_BY_DEFAULT:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def is_on(self) -> bool | None:
