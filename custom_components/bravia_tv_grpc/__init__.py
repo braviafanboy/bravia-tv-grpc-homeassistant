@@ -3,6 +3,9 @@
 Controls Sony BRAVIA TVs over the local ControlDeviceService gRPC API (the
 BRAVIA Connect control plane): live push via StartNotifyStates and control via
 ExecCommandWithAuth. Entities are driven by the device's GetCapabilities schema.
+A few controls that exist only on the TV's Sony-cloud capability set (sleep
+timer, picture off, playback transport, deep links, …) go through the Sony
+IoT cloud with the same account; see ``grpc/cloud_commands.py``.
 """
 
 from __future__ import annotations

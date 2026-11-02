@@ -2,8 +2,11 @@
 
 Exposes the TV's ``remote_key`` actions through Home Assistant's
 ``remote.send_command`` -- the Sony on-screen shortcut menus (Quick Settings,
-Audio, Guide, ...), D-pad navigation and relative channel change -- mirroring
-how the Android TV Remote integration is driven. On/off mirrors power.
+Audio, Guide, ...), D-pad navigation, relative channel change and the power
+key -- mirroring how the Android TV Remote integration is driven. ``hold_secs``
+is honoured for the keys the TV exposes with press / release semantics (a
+press the TV completes itself after one second is a long press). On/off
+mirrors power, with the Sony cloud as the standby fallback.
 
 Only commands whose gRPC path the device advertises are accepted.
 """

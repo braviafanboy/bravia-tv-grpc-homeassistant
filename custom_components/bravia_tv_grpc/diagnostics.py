@@ -59,6 +59,10 @@ def _diagnostics(
             }
             for path, meta in sorted(caps.items())
         },
+        "cloud_capabilities": {
+            name: list(commands)
+            for name, commands in sorted(coordinator.cloud_capabilities.items())
+        },
         "state": async_redact_data(dict(coordinator.data or {}), TO_REDACT),
         "app_list": [
             {"id": app.get("id"), "label": app.get("label")}

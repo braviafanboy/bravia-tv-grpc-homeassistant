@@ -1,10 +1,14 @@
 """State coordinator for the Bravia TV (gRPC) integration.
 
-Owns the gRPC client, seeds an initial snapshot from the Sony IoT cloud (the
-gRPC StartNotifyStates stream only emits on change, not on subscribe), and
-turns push deltas into Home Assistant state updates. All blocking gRPC work is
-run in the executor; the notify worker is a background thread that hands values
-back to the event loop thread-safely.
+Owns the gRPC client, seeds an initial snapshot with a bulk GetStatesWithAuth
+read (the StartNotifyStates stream only emits on change, not on subscribe;
+the Sony cloud snapshot is the fallback), and turns push deltas into Home
+Assistant state updates. It also owns the Sony cloud command channel for the
+cloud-only capabilities: their states live under ``cloud.*`` in the same data
+dict, seeded from the cloud snapshot, updated from the TV's report after each
+command and refreshed by a slow poll. All blocking gRPC work is run in the
+executor; the notify worker is a background thread that hands values back to
+the event loop thread-safely.
 """
 
 from __future__ import annotations

@@ -4,7 +4,10 @@ Composes the push-backed control paths (``power``, ``volume``, ``mute``) plus
 source selection into a single media_player. Features are added only for paths
 the device advertises, so the entity degrades gracefully on models that lack
 one. SELECT_SOURCE switches external inputs (by their native id) and launches
-apps, both via the verified any-typed write.
+apps, both via the verified any-typed write. Playback transport, seek and the
+``url`` / ``theme`` / ``channel`` play_media types, the ``search`` service and
+the standby power-on fallback go through the Sony cloud command channel and
+are offered only when the TV advertises those cloud capabilities.
 """
 
 from __future__ import annotations
