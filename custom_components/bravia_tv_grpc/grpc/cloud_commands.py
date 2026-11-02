@@ -22,12 +22,13 @@ Flow:
    capability plus a baseline bundle (power, volume, mute, playback).
    Verified live on a BRAVIA 8 II (2026-11-02).
 
-Command shape::
+Command shape (verified live; the cloud wraps any-typed arguments for the TV
+itself, so the client sends them flat)::
 
     {"name": "<capability>", "command": "set",    "args": {"value": <int|enum|bool>}}
     {"name": "<capability>", "command": "plus",   "args": {"value": <int step>}}
-    {"name": "<capability>", "command": "post",   "args": {"args": {...}}}
-    {"name": "<capability>", "command": "set",    "args": {"args": {...}}}   # any-typed
+    {"name": "<capability>", "command": "post",   "args": {<its own keys>}}
+    {"name": "<capability>", "command": "set",    "args": {<its own keys>}}  # any
     {"name": "<capability>", "command": "toggle"}
 
 This module is HA-agnostic (aiohttp only) so it can be exercised standalone by
@@ -111,10 +112,10 @@ class CloudCommandTimeout(CloudCommandError):
 # Command builders (pure)
 # ----------------------------------------------------------------------------
 def set_command(name: str, value: Any) -> dict[str, Any]:
-    """``set`` a capability. Scalars go in ``value``; dicts (any-typed) in
-    ``args``."""
+    """``set`` a capability. Scalars go in ``value``; an any-typed capability
+    takes its own keys as the ``args`` object."""
     if isinstance(value, dict):
-        return {"name": name, "command": "set", "args": {"args": value}}
+        return {"name": name, "command": "set", "args": dict(value)}
     return {"name": name, "command": "set", "args": {"value": value}}
 
 
@@ -124,8 +125,11 @@ def plus_command(name: str, step: int) -> dict[str, Any]:
 
 
 def post_command(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """``post`` an any-typed action (deep link, channel, search, ui_action)."""
-    return {"name": name, "command": "post", "args": {"args": dict(args)}}
+    """``post`` an any-typed action with the capability's own argument keys,
+    e.g. ``application.deep_link`` -> ``{"package_name", "uri"}``,
+    ``select_media`` -> ``{"contentId", "packageName"}``, ``search`` ->
+    ``{"action", "search_text"}``, ``channel`` -> ``{"number"}``."""
+    return {"name": name, "command": "post", "args": dict(args)}
 
 
 def toggle_command(name: str) -> dict[str, Any]:

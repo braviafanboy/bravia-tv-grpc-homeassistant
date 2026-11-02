@@ -10,7 +10,7 @@ Standalone (no Home Assistant). Reuses the credentials saved by
     python tools/cloud_command_probe.py send playback set paused
     python tools/cloud_command_probe.py send seek plus -- -10
     python tools/cloud_command_probe.py send application.deep_link post \
-        --json '{"packageName": "com.google.android.youtube.tv", "uri": "..."}'
+        --json '{"package_name": "com.google.android.youtube.tv", "uri": "https://..."}'
 
 Every HTTP exchange is printed verbatim so the wire format can be confirmed
 (and the module adjusted) without a packet capture.

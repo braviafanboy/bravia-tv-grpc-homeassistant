@@ -24,7 +24,7 @@ def test_set_scalar_uses_value():
 def test_set_dict_uses_args():
     # Any-typed capabilities take a JSON object under ``args`` (SetAny).
     cmd = cc.set_command("input", {"label": "HDMI 1"})
-    assert cmd["args"] == {"args": {"label": "HDMI 1"}}
+    assert cmd["args"] == {"label": "HDMI 1"}
 
 
 def test_plus_post_toggle():
@@ -33,10 +33,11 @@ def test_plus_post_toggle():
         "command": "plus",
         "args": {"value": -10},
     }
+    # Verified live: the argument object is sent flat (no extra nesting).
     assert cc.post_command("application.deep_link", {"uri": "x"}) == {
         "name": "application.deep_link",
         "command": "post",
-        "args": {"args": {"uri": "x"}},
+        "args": {"uri": "x"},
     }
     assert cc.toggle_command("mute") == {"name": "mute", "command": "toggle"}
 
