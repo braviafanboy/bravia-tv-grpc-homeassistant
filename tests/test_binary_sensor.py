@@ -48,10 +48,10 @@ async def _sensor(hass: HomeAssistant) -> BraviaTvHdmiDeviceSensor:
 
 async def test_linked_soundbar_is_on_with_attrs(hass: HomeAssistant) -> None:
     sensor = await _sensor(hass)
-    sensor.coordinator._apply_delta(HDMI, '{"version":"0x10","device_id":"0xbac76409"}')
+    sensor.coordinator._apply_delta(HDMI, '{"version":"0x10","device_id":"0xf9e8d7c6"}')
     assert sensor.is_on is True
     assert sensor.extra_state_attributes == {
-        "device_id": "0xbac76409",
+        "device_id": "0xf9e8d7c6",
         "version": "0x10",
     }
     await sensor.coordinator.async_shutdown()

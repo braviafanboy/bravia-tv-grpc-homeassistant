@@ -113,7 +113,7 @@ async def test_user_flow_resolves_device_unique_id(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert (
         mock.call_args.kwargs["device_unique_id"]
-        == "51b397cf985b8b061839034fef909670e29196d2"
+        == "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
     )
 
 
@@ -151,10 +151,10 @@ async def test_duplicate_aborts(hass: HomeAssistant) -> None:
 
 
 _TV_NAME = (
-    "BRAVIA 8 II-51b397cf985b8b061839034fef909670e29196d2._sonysmarthome._tcp.local."
+    "BRAVIA 8 II-0a1b2c3d4e5f60718293a4b5c6d7e8f901234567._sonysmarthome._tcp.local."
 )
 _SB_NAME = (
-    "BRAVIA Theatre Quad-bac76409bb5c6c22c700fe9795c0e17d91022acc"
+    "BRAVIA Theatre Quad-f9e8d7c6b5a4938271605f4e3d2c1b0a99887766"
     "._sonysmarthome._tcp.local."
 )
 
@@ -215,7 +215,7 @@ async def test_zeroconf_soundbar_rejected(hass: HomeAssistant) -> None:
     # The discovered device's unique id is passed so pairing binds to it.
     assert (
         mock.call_args.kwargs["device_unique_id"]
-        == "bac76409bb5c6c22c700fe9795c0e17d91022acc"
+        == "f9e8d7c6b5a4938271605f4e3d2c1b0a99887766"
     )
 
 
@@ -236,7 +236,7 @@ async def test_zeroconf_tv_creates_entry(hass: HomeAssistant) -> None:
     assert result["data"]["host"] == "192.0.2.10"
     assert (
         mock.call_args.kwargs["device_unique_id"]
-        == "51b397cf985b8b061839034fef909670e29196d2"
+        == "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"
     )
 
 
@@ -254,7 +254,7 @@ async def test_zeroconf_moved_tv_updates_host(hass: HomeAssistant) -> None:
         data={
             "host": "192.0.2.10",
             CONF_GRPC_PORT: 36547,
-            CONF_DEVICE_UNIQUE_ID: "51b397cf985b8b061839034fef909670e29196d2",
+            CONF_DEVICE_UNIQUE_ID: "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
         },
     )
     entry.add_to_hass(hass)

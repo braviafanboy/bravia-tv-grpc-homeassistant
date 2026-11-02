@@ -278,8 +278,7 @@ def cmd_enumerate(args: argparse.Namespace) -> None:
 
     # GetCapabilities is unauthenticated (empty request) and returns the TV's
     # full internal field-path namespace as JSON -- the authoritative local
-    # gRPC schema. This is what a BRAVIA Connect packet capture would have
-    # recovered, obtained directly and read-only.
+    # gRPC schema, obtained directly from the TV and read-only.
     print("\n[4/4] GetCapabilities + GetStatesWithAuth...")
     cap_call = channel.unary_unary(
         get_capabilities_method(),

@@ -14,7 +14,8 @@ from .const import (
     CONF_SW_VERSION,
     DOMAIN,
 )
-from .coordinator import BraviaTvCoordinator
+from .coordinator import BraviaTvCoordinator, cloud_path
+from .grpc import cloud_commands as cloud
 
 
 class BraviaTvEntity(CoordinatorEntity[BraviaTvCoordinator]):
@@ -83,3 +84,28 @@ class BraviaTvEntity(CoordinatorEntity[BraviaTvCoordinator]):
 
     async def _async_set(self, value: Any) -> None:
         await self.coordinator.async_set_field(self._grpc_path, value)
+
+
+class BraviaTvCloudEntity(BraviaTvEntity):
+    """Base for controls that only exist on the TV's Sony cloud capability set.
+
+    State lives under ``cloud.<name>`` in the coordinator data (seeded from the
+    cloud snapshot, refreshed from the TV's report after each command). Writes
+    go through the Sony cloud, which the TV only acts on while it is powered
+    on, so the entity is unavailable while the TV is off.
+    """
+
+    def __init__(self, coordinator: BraviaTvCoordinator, cloud_name: str) -> None:
+        super().__init__(coordinator, cloud_path(cloud_name))
+        self._cloud_name = cloud_name
+
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self.state_value("power"))
+
+    async def _async_cloud_set(self, value: Any) -> None:
+        """``set`` this capability via the cloud and reflect it optimistically."""
+        await self.coordinator.async_cloud_command(
+            self._cloud_name, [cloud.set_command(self._cloud_name, value)]
+        )
+        self.coordinator.set_cloud_value(self._cloud_name, value)

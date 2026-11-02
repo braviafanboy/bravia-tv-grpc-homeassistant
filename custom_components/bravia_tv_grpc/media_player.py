@@ -26,6 +26,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator, _icon_uri
 from .entity import BraviaTvEntity
+from .grpc import cloud_commands as cloud
 from .grpc.resources import image_content_type
 from .util import parse_json_value, source_label
 
@@ -48,6 +49,11 @@ _AVAILABLE_INPUTS = "system_setting.available_inputs"
 
 # Fraction of full range moved per volume-step press.
 _VOLUME_STEP = 0.02
+
+# Playback transport has no local gRPC path (the remote_key enums carry no
+# play/pause). It is a cloud-only capability: ``playback`` set to one of
+# playing / paused / stopped / previous / next, delivered via the Sony cloud.
+_PLAYBACK = "playback"
 
 
 async def async_setup_entry(
@@ -94,6 +100,16 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
             features |= (
                 MediaPlayerEntityFeature.BROWSE_MEDIA
                 | MediaPlayerEntityFeature.PLAY_MEDIA
+            )
+        # Transport controls go through the Sony cloud command channel; only
+        # offered when the TV advertised the playback capability there.
+        if coordinator.cloud_supports(_PLAYBACK):
+            features |= (
+                MediaPlayerEntityFeature.PLAY
+                | MediaPlayerEntityFeature.PAUSE
+                | MediaPlayerEntityFeature.STOP
+                | MediaPlayerEntityFeature.NEXT_TRACK
+                | MediaPlayerEntityFeature.PREVIOUS_TRACK
             )
         self._attr_supported_features = features
 
@@ -285,3 +301,24 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         if current is None:
             return
         await self.async_set_volume_level(max(0.0, min(1.0, current + delta)))
+
+    # -- transport (cloud) --------------------------------------------------
+    async def _async_playback(self, value: str) -> None:
+        await self.coordinator.async_cloud_command(
+            _PLAYBACK, [cloud.set_command(_PLAYBACK, value)]
+        )
+
+    async def async_media_play(self) -> None:
+        await self._async_playback("playing")
+
+    async def async_media_pause(self) -> None:
+        await self._async_playback("paused")
+
+    async def async_media_stop(self) -> None:
+        await self._async_playback("stopped")
+
+    async def async_media_next_track(self) -> None:
+        await self._async_playback("next")
+
+    async def async_media_previous_track(self) -> None:
+        await self._async_playback("previous")

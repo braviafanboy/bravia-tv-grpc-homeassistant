@@ -1,16 +1,21 @@
 """Local gRPC client for BRAVIA TVs (ControlDeviceService over h2c).
 
 Intentionally HA-agnostic so it can be exercised standalone against a real TV.
-Wraps the ported wire builders for the three calls verified working on a
+Wraps the ported wire builders for the calls verified working on a
 BRAVIA 8 II / K-65XR8M2:
 
 - ``GetCapabilities`` (unauthenticated) -> the device's full field-path schema.
 - ``StartNotifyStates`` (server stream) -> live ``(path, value)`` state deltas.
+- ``GetStatesWithAuth`` (signed, unary) -> bulk snapshot of every readable
+  path; also used as a single-path liveness probe and, nonce-gated, for the
+  AES-GCM encrypted application list.
+- ``GetResourcesWithAuth`` (signed, nonce-gated) -> encrypted resources such
+  as app icons.
 - ``ExecCommandWithAuth`` (signed) -> set a field.
 
-The unary ``GetStatesWithAuth`` snapshot is deliberately not used: its TV
-request wire format is unresolved, and push + an initial snapshot from another
-source cover reads.
+The unsigned twins ``GetStates`` / ``ExecCommand`` / ``GetResources`` are
+hard-coded ``UNAVAILABLE`` stubs on the TV, and ``GenericCommandWithAuth`` is
+the wireless-speaker pairing channel, so neither is used here.
 """
 
 from __future__ import annotations

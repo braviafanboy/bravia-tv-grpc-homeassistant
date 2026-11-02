@@ -8,19 +8,19 @@ import pytest
 _TV = {
     "device_id": "tv-id",
     "device_type": "TV",
-    "attributes": {"device_unique_id": "51b397cf"},
+    "attributes": {"device_unique_id": "0a1b2c3d"},
     "device_infos": {"model_name": "BRAVIA 8 II"},
 }
 _SPEAKER = {
     "device_id": "spk-id",
     "device_type": "Speaker",
-    "attributes": {"device_unique_id": "bac76409"},
+    "attributes": {"device_unique_id": "f9e8d7c6"},
     "device_infos": {"model_name": "BRAVIA Theatre Quad"},
 }
 
 
 def test_select_tv_by_unique_id():
-    got = credentials.select_tv_device([_TV, _SPEAKER], device_unique_id="51b397cf")
+    got = credentials.select_tv_device([_TV, _SPEAKER], device_unique_id="0a1b2c3d")
     assert got["device_id"] == "tv-id"
 
 
@@ -32,7 +32,7 @@ def test_select_unique_id_is_case_insensitive():
 def test_select_soundbar_unique_id_rejected():
     # The reported bug: a soundbar shares the account and mDNS service.
     with pytest.raises(credentials.GrpcNotATvError):
-        credentials.select_tv_device([_TV, _SPEAKER], device_unique_id="bac76409")
+        credentials.select_tv_device([_TV, _SPEAKER], device_unique_id="f9e8d7c6")
 
 
 def test_select_falls_back_to_single_tv():

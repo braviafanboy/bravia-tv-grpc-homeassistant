@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvCloudEntity, BraviaTvEntity
 from .util import friendly_enum_label, parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +51,20 @@ _SELECTS: dict[str, tuple[str, str]] = {
     "display_and_sound_setting.theatre_mode": ("theatre_mode", "mdi:theater"),
 }
 
+# Cloud-only enum capabilities (no local gRPC path): cloud name -> (translation
+# key, icon). Options come from the TV's advertised cloud capability values.
+# sleep_timer: "off" | "15min" ... "120min"; the TV clears it on power-off.
+_CLOUD_SELECTS: dict[str, tuple[str, str]] = {
+    "sleep_timer": ("sleep_timer", "mdi:timer-sand"),
+}
+
+
+def _cloud_label(value: str) -> str:
+    """``15min`` -> ``15 min``, ``off`` -> ``Off``."""
+    if value.endswith("min") and value[:-3].isdigit():
+        return f"{value[:-3]} min"
+    return friendly_enum_label(value)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -74,7 +88,48 @@ async def async_setup_entry(
                 coordinator, "bluetooth", "bluetooth", "mdi:bluetooth-audio"
             )
         )
+    for name, (key, icon) in _CLOUD_SELECTS.items():
+        values = coordinator.cloud_values.get(name)
+        if coordinator.cloud_supports(name) and values:
+            entities.append(BraviaTvCloudSelect(coordinator, name, key, icon, values))
     async_add_entities(entities)
+
+
+class BraviaTvCloudSelect(BraviaTvCloudEntity, SelectEntity):
+    """A cloud-only enum capability (e.g. the sleep timer) as a select."""
+
+    def __init__(
+        self,
+        coordinator: BraviaTvCoordinator,
+        cloud_name: str,
+        translation_key: str,
+        icon: str,
+        options: tuple[str, ...],
+    ) -> None:
+        super().__init__(coordinator, cloud_name)
+        self._attr_translation_key = translation_key
+        self._attr_icon = icon
+        self._raw_options = list(options)
+
+    @property
+    def options(self) -> list[str]:
+        return [_cloud_label(v) for v in self._raw_options]
+
+    @property
+    def current_option(self) -> str | None:
+        value = self._value
+        if not isinstance(value, str):
+            return None
+        if value not in self._raw_options:
+            self._raw_options.append(value)
+        return _cloud_label(value)
+
+    async def async_select_option(self, option: str) -> None:
+        raw = next((v for v in self._raw_options if _cloud_label(v) == option), None)
+        if raw is None:
+            _LOGGER.warning("Unknown %s option: %s", self._cloud_name, option)
+            return
+        await self._async_cloud_set(raw)
 
 
 class BraviaTvSelect(BraviaTvEntity, SelectEntity):

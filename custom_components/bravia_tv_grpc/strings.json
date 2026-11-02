@@ -42,6 +42,12 @@
   "exceptions": {
     "exec_rejected": {
       "message": "The TV rejected the change to {path}. It may not be available in the current context (for example the setting's input, app, or audio output isn't active)."
+    },
+    "cloud_rejected": {
+      "message": "The TV rejected the cloud command for {name}: {reason}."
+    },
+    "cloud_unreachable": {
+      "message": "Could not send {name} through the Sony cloud: {reason}."
     }
   },
   "entity": {
@@ -57,6 +63,9 @@
       },
       "calibrated_picture_mode": {
         "name": "Calibrated Picture Mode"
+      },
+      "picture": {
+        "name": "Picture"
       }
     },
     "number": {
@@ -100,6 +109,9 @@
       },
       "bluetooth": {
         "name": "Bluetooth"
+      },
+      "sleep_timer": {
+        "name": "Sleep Timer"
       }
     },
     "sensor": {

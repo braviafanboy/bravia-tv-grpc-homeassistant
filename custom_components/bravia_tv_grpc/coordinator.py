@@ -9,18 +9,22 @@ back to the event loop thread-safely.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .bravia_tv_client import BraviaTvGrpcClient
-from .const import CONF_FW_PENDING, CONF_GRPC_KEYS, DOMAIN
+from .const import CONF_FW_PENDING, CONF_GRPC_DEVICE_ID, CONF_GRPC_KEYS, DOMAIN
+from .grpc import cloud_commands as cloud
 from .grpc import credentials as cred
 from .grpc.application_list import APPLICATION_LIST_PATH
 
@@ -45,6 +49,20 @@ _CLOUD_TO_GRPC_PATH = {
     # source property accepts either form.
     "input": "system_setting.tvapp.input",
 }
+
+# Cloud-only capabilities (no local gRPC path) are kept in the same state dict
+# under this prefix, e.g. ``cloud.sleep_timer``. They are seeded from the Sony
+# cloud snapshot at startup and refreshed from the TV's report after each cloud
+# command; there is no push for them.
+CLOUD_PREFIX = "cloud."
+# Overall budget for the best-effort cloud load at startup; the TV is already
+# fully usable from the local plane before this runs.
+_CLOUD_LOAD_TIMEOUT = 15
+
+
+def cloud_path(name: str) -> str:
+    """State-dict key for a cloud capability name."""
+    return f"{CLOUD_PREFIX}{name}"
 
 
 def _snake_to_camel(value: str) -> str:
@@ -105,15 +123,27 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Decrypted app icons, keyed by their content-addressed resource URI (the
         # hash changes when an app's icon changes, so entries never go stale).
         self._icon_cache: dict[str, bytes] = {}
+        # Sony cloud command channel: the TV's advertised cloud capabilities
+        # (``{name: command words}``, from its GET /devices entry), their enum
+        # values, and a cached OAuth access token for the IoT API. Empty when
+        # the cloud is unreachable at startup, in which case no cloud-backed
+        # entities are created.
+        self.cloud_capabilities: dict[str, tuple[str, ...]] = {}
+        self.cloud_values: dict[str, tuple[str, ...]] = {}
+        self._cloud_token: str | None = None
+        self._cloud_token_expires_at = 0.0
+        self._cloud_lock = asyncio.Lock()
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
         await self.hass.async_add_executor_job(self.client.connect)
         await self.hass.async_add_executor_job(self.client.get_capabilities)
-        # Prefer a full on-demand snapshot straight from the TV (GetStates);
-        # fall back to the Sony cloud snapshot if that read fails.
-        if not await self._seed_from_device():
-            await self._seed_from_cloud()
+        # Prefer a full on-demand snapshot straight from the TV (GetStates).
+        # The Sony cloud is then consulted (best effort) for the TV's cloud
+        # capability list and the cloud-only states, and as a fallback seed for
+        # the local paths if the device read failed.
+        seeded = await self._seed_from_device()
+        await self._async_load_cloud(seed_local=not seeded)
         # Deltas arrive on a worker thread; marshal them onto the loop.
         self.client.start_notify(
             self._on_delta_threadsafe,
@@ -307,26 +337,92 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.debug("seeded %d fields from device GetStates", len(states))
         return True
 
-    async def _seed_from_cloud(self) -> None:
-        """Best-effort initial snapshot from the Sony IoT cloud states API."""
+    # -- Sony cloud -----------------------------------------------------------
+    def _cloud_credentials(self) -> dict[str, Any] | None:
         keys = self._entry.data.get(CONF_GRPC_KEYS)
         if not keys:
+            return None
+        try:
+            return cred.parse_credentials_json(keys)
+        except (TypeError, ValueError):
+            return None
+
+    def _cloud_device_id(self, creds: dict[str, Any]) -> str | None:
+        return self._entry.data.get(CONF_GRPC_DEVICE_ID) or creds.get("device_id")
+
+    async def _async_cloud_token(self, *, force: bool = False) -> str:
+        """A valid Sony IoT access token: cached, else from the stored bundle,
+        else refreshed with the refresh token."""
+        now = time.time()
+        if not force and self._cloud_token and now < self._cloud_token_expires_at - 60:
+            return self._cloud_token
+        creds = self._cloud_credentials()
+        if not creds:
+            raise cred.GrpcCredentialsError("No Sony credentials stored")
+        token = creds.get("access_token")
+        expires_at = creds.get("access_token_expires_at")
+        if (
+            not force
+            and isinstance(token, str)
+            and token
+            and isinstance(expires_at, int | float)
+            and now < float(expires_at) - 60
+        ):
+            self._cloud_token, self._cloud_token_expires_at = token, float(expires_at)
+            return token
+        refresh_token = creds.get("refresh_token")
+        if not refresh_token:
+            raise cred.GrpcCredentialsError("No Sony refresh token stored")
+        session = async_get_clientsession(self.hass)
+        response = await cred.async_refresh_access_token(session, refresh_token)
+        self._cloud_token = response["access_token"]
+        self._cloud_token_expires_at = now + int(response.get("expires_in") or 3600)
+        return self._cloud_token
+
+    async def _async_load_cloud(self, *, seed_local: bool) -> None:
+        """Best-effort load of the TV's cloud capabilities and state snapshot.
+
+        Fills ``cloud_capabilities`` (which gates the cloud-backed entities),
+        seeds the ``cloud.*`` states and, when ``seed_local`` is set, the local
+        paths the cloud also reports. Never raises: the local plane is fully
+        usable without the cloud.
+        """
+        creds = self._cloud_credentials()
+        if not creds:
+            return
+        device_id = self._cloud_device_id(creds)
+        if not device_id:
             return
         try:
-            creds = cred.parse_credentials_json(keys)
-            snapshot = await self.hass.async_add_executor_job(
-                self._fetch_cloud_states, creds
-            )
+            async with asyncio.timeout(_CLOUD_LOAD_TIMEOUT):
+                token = await self._async_cloud_token()
+                session = async_get_clientsession(self.hass)
+                devices = (await cred.async_get_devices(session, token)).get(
+                    "devices", []
+                )
+                device = next(
+                    (d for d in devices if d.get("device_id") == device_id), None
+                )
+                if device is not None:
+                    self.cloud_capabilities = cloud.capabilities_from_device(device)
+                    self.cloud_values = {
+                        name: cloud.capability_values(device, name)
+                        for name in self.cloud_capabilities
+                    }
+                snapshot = await cred.async_get_device_states(session, device_id, token)
         except Exception:  # noqa: BLE001
-            _LOGGER.debug("cloud seed snapshot unavailable", exc_info=True)
+            _LOGGER.debug("Sony cloud unavailable at startup", exc_info=True)
             return
         caps = self.client.capabilities
         for item in snapshot.get("states", []):
             name = item.get("name")
-            path = _CLOUD_TO_GRPC_PATH.get(name)
-            if not path:
+            if not isinstance(name, str):
                 continue
             value = item.get("value")
+            self._state[cloud_path(name)] = value
+            path = _CLOUD_TO_GRPC_PATH.get(name)
+            if not seed_local or not path:
+                continue
             if item.get("type") == "enum" and isinstance(value, str):
                 camel = _snake_to_camel(value)
                 meta = caps.get(path)
@@ -338,10 +434,87 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
                 value = camel
             self._state[path] = value
+        _LOGGER.debug(
+            "cloud: %d capabilities, %d states",
+            len(self.cloud_capabilities),
+            len(snapshot.get("states", [])),
+        )
 
-    def _fetch_cloud_states(self, creds: dict[str, Any]) -> dict[str, Any]:
-        token = cred.refresh_access_token(creds["refresh_token"])["access_token"]
-        return cred.get_device_states(creds["device_id"], token)
+    def cloud_supports(self, name: str, command: str = "set") -> bool:
+        """Whether the TV advertised ``command`` for cloud capability ``name``."""
+        return command in self.cloud_capabilities.get(name, ())
+
+    @callback
+    def set_cloud_value(self, name: str, value: Any) -> None:
+        """Optimistically record a cloud-only state and notify entities."""
+        self._state[cloud_path(name)] = value
+        self.async_set_updated_data(dict(self._state))
+
+    async def async_cloud_command(
+        self, name: str, commands: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Run cloud ``commands`` on the TV and apply any states it reports back.
+
+        ``name`` is the capability being changed (for error messages). Raises
+        HomeAssistantError when the cloud is unreachable or the TV rejects the
+        command (e.g. ``POWER_OFF`` while in standby).
+        """
+        creds = self._cloud_credentials()
+        device_id = self._cloud_device_id(creds) if creds else None
+        if not device_id:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="cloud_unreachable",
+                translation_placeholders={
+                    "name": name,
+                    "reason": "no Sony credentials stored",
+                },
+            )
+        session = async_get_clientsession(self.hass)
+        async with self._cloud_lock:
+            try:
+                token = await self._async_cloud_token()
+                try:
+                    result = await cloud.async_run_commands(
+                        session, device_id, token, commands
+                    )
+                except cloud.CloudCommandError as err:
+                    if err.status not in (401, 403):
+                        raise
+                    # Access token no longer accepted: refresh once and retry.
+                    token = await self._async_cloud_token(force=True)
+                    result = await cloud.async_run_commands(
+                        session, device_id, token, commands
+                    )
+            except cloud.CloudCommandError as err:
+                if err.result is not None and not isinstance(
+                    err, cloud.CloudCommandTimeout
+                ):
+                    _LOGGER.warning("cloud command %s rejected: %s", name, err)
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="cloud_rejected",
+                        translation_placeholders={
+                            "name": name,
+                            "reason": err.error or str(err),
+                        },
+                    ) from err
+                _LOGGER.warning("cloud command %s failed: %s", name, err)
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="cloud_unreachable",
+                    translation_placeholders={"name": name, "reason": str(err)},
+                ) from err
+            except (cred.GrpcCredentialsError, cred.GrpcCredentialsRefreshError) as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="cloud_unreachable",
+                    translation_placeholders={"name": name, "reason": str(err)},
+                ) from err
+        for state_name, value in cloud.reported_states(result).items():
+            self._state[cloud_path(state_name)] = value
+        self.async_set_updated_data(dict(self._state))
+        return result
 
     @callback
     def _apply_delta(self, path: str, value: Any) -> None:
@@ -355,6 +528,10 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
         self._state[path] = value
+        if path == "power" and not value and cloud_path("sleep_timer") in self._state:
+            # The TV clears its sleep timer whenever it powers off (see Sony's
+            # help guide); there is no push for cloud-only states, so mirror it.
+            self._state[cloud_path("sleep_timer")] = "off"
         if (
             path == "fw_update.update_exist"
             and value

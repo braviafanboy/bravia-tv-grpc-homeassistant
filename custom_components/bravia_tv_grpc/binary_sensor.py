@@ -22,7 +22,7 @@ from .util import parse_json_value
 _ERROR_STATUS = "error_status"
 # Info about the single Sony-protocol device linked over HDMI/eARC (the "ssh" in
 # the path is Sony's HES protocol namespace, not secure shell): any-typed JSON
-# like {"version": "0x10", "device_id": "0xbac76409"}. The API exposes ONE such
+# like {"version": "0x10", "device_id": "0xf9e8d7c6"}. The API exposes ONE such
 # value -- there is no per-HDMI-port variant -- so it reflects the linked
 # Sony/eARC device (typically the soundbar), not every port.
 _HDMI_DEVICE = "hdmi_connected_device.sshinfo"

@@ -19,7 +19,7 @@ def extract_signing_preimage(request_bytes: bytes) -> bytes:
     Return bytes signed for GetStatesWithAuth auth tail.
 
     Wire layout: ``field1 (0x0a + varint + preimage) + field2 (0x1220 + 32 B HMAC)``.
-    Frida ``hmacApplyMac`` signs the inner ``preimage`` only (no outer tag/length).
+    The TV signs the inner ``preimage`` only (no outer tag/length).
     """
     marker = b"\x12\x20"
     idx = request_bytes.rfind(marker)
@@ -53,7 +53,7 @@ def build_get_states_signing_preimage(
     session_id: str,
 ) -> bytes:
     """
-    Preimage for full GetStatesWithAuth snapshot (Frida ``data_len=6521``).
+    Preimage for the full GetStatesWithAuth snapshot request.
 
     ``field_list_block`` is the nested path list (``0x0a`` + varint + paths).
     """
@@ -76,7 +76,7 @@ def build_mutex_signing_preimage(
     session_random: bytes,
     session_id: str,
 ) -> bytes:
-    """Preimage for mutex GetStatesWithAuth (Frida ``data_len=78``)."""
+    """Preimage for the single-path (mutex) GetStatesWithAuth request."""
     path_bytes = path.encode("utf-8")
     depth2 = b"\x0a" + encode_varint(len(path_bytes)) + path_bytes
     depth1 = b"\x0a" + encode_varint(len(depth2)) + depth2

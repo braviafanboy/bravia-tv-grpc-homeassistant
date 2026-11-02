@@ -65,7 +65,7 @@ def build_exec_command_signing_preimage(
     """
     Return the 68-byte (typical) inner exec body signed for ``auth_token``.
 
-    Frida ``hmacApplyMac`` signs ``HMAC-SHA256(hmac_key, preimage)`` where
+    The TV verifies ``HMAC-SHA256(hmac_key, preimage)`` where
     preimage is the nested command + embedded session block (no outer wrappers).
     """
     value_kwargs = (
@@ -148,7 +148,7 @@ def build_exec_command_with_auth_request(
     any_value: str | None = None,
 ) -> bytes:
     """
-    Return serialized ExecCommandWithAuth request matching BRAVIA Connect captures.
+    Return the serialized ExecCommandWithAuth request in the TV's expected layout.
 
     Nested layout (three ``0a`` path wraps + embedded session + trailing auth token):
       field 1: command block (path + fixed ``10 01`` + value variant + session embed)

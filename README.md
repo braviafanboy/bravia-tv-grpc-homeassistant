@@ -50,6 +50,12 @@ and different value encodings — all handled here.
 - **Diagnostics & recovery.** Redacted config-entry / device diagnostics, plus
   standard Home Assistant repair and re-authentication prompts when the TV needs
   attention (see [Troubleshooting](#troubleshooting)).
+- **Cloud-only controls, via the Sony cloud.** A few TV functions — the sleep
+  timer, Picture Off and playback transport — exist only on the capability set
+  the TV registers with Sony's cloud, the channel the BRAVIA Connect app itself
+  uses for them. They are offered through the same Sony sign-in, with the TV's
+  result read back after each command. See
+  [Cloud-backed controls](#cloud-backed-controls).
 
 ## Entities
 
@@ -61,19 +67,25 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   (Netflix, Twitch, Disney+, …). Includes a browsable grid of installed apps
   with icons (tap to launch) and now-playing artwork for the foreground app.
   Source reflects the active input, or the foreground app when one is running.
+  Play / pause / stop / next / previous are offered when the TV advertises
+  playback control to the Sony cloud (see
+  [Cloud-backed controls](#cloud-backed-controls)).
 - **`remote`** — `remote.send_command` for the TV's keys: Sony on-screen
   shortcut menus (Quick Settings, Audio, Guide, App Menu, Menu, TV), D-pad
   navigation (up/down/left/right/center/back/home) and channel up/down.
 - **`select`** — Picture Mode (60+ options incl. Custom for Pro 1/2, calibrated,
-  Dolby Vision variants), Content Mode, Theatre Mode, and two audio-output group
-  selects: Speakers (TV / audio system) and Bluetooth.
+  Dolby Vision variants), Content Mode, Theatre Mode, two audio-output group
+  selects: Speakers (TV / audio system) and Bluetooth, and Sleep Timer
+  (cloud-backed).
 - **`number`** — Volume, Brightness, TV Speaker / Bluetooth / HDMI-output
   volumes, Voice Zoom, and Rear Speaker / Subwoofer levels for **Direct Connect**
   wireless BRAVIA Theatre speakers paired straight to the TV. On a new install
   the rear / subwoofer levels start **disabled** if the TV reports no such
   speaker was ever paired; if you pair them later, enable the two entities under
   **Settings → Devices & Services → Entities**.
-- **`switch`** — Power, Mute, Bluetooth 3D Surround, Calibrated Picture Mode.
+- **`switch`** — Power, Mute, Bluetooth 3D Surround, Calibrated Picture Mode,
+  and Picture (cloud-backed: off = the TV's *Picture Off*, screen dark with
+  audio playing).
 - **`sensor`** — Video Signal (e.g. “4K 24fps Dolby Vision”), Audio Signal (e.g.
   “5.1 Surround Dolby Atmos”, or “PCM” for app audio), App (foreground app /
   active input), App List (installed apps), Bluetooth Device (connected audio
@@ -84,6 +96,36 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   soundbar).
 - **`text`** — the TV's friendly name.
 - **`update`** — firmware update availability.
+
+## Cloud-backed controls
+
+The TV advertises two capability sets: the local `GetCapabilities` schema
+(118 paths on a BRAVIA 8 II) that everything above is built from, and a much
+smaller set it registers with Sony's IoT cloud (23 on the same TV; see
+[`schema/SCHEMA.md`](schema/SCHEMA.md)). Most cloud entries mirror local paths,
+but a handful exist **only** in the cloud set and have no local gRPC route at
+all:
+
+| Cloud capability | Entity | Notes |
+|---|---|---|
+| `sleep_timer` | `select` Sleep Timer | off / 15 / 30 / 45 / 60 / 90 / 120 min; the TV clears it when powered off |
+| `picture` | `switch` Picture | off = *Picture Off* (panel dark, audio continues) |
+| `playback` | `media_player` play / pause / stop / next / previous | drives the foreground app's media session |
+
+These are sent through the same Sony account the integration already signs in
+with: a command is posted to Sony's IoT API, Sony delivers it to the TV, and
+the TV's own result (including the new state) is read back before the entity
+updates — a rejected command surfaces as an error rather than a silent no-op. The TV only acts on them while powered on, so the entities show
+as unavailable when it is off. They need internet access and Sony's cloud to
+be up; everything else in the integration stays local-push. The remaining
+cloud-only capabilities (seek, deep links, channel selection, search, D-pad,
+on-screen shortcuts) are reachable the same way but have no entity yet;
+`tools/cloud_command_probe.py` exercises any of them from the command line.
+
+> ⚠️ The cloud command channel has **not yet been exercised against a live
+> TV**. Please confirm with the probe tool (`caps`, then e.g.
+> `send sleep_timer set 30min`) before relying on these entities, and report
+> what the cloud returned.
 
 ## Soundbar control is out of scope
 
@@ -304,6 +346,10 @@ pure wire-decode tests run on any Python.
 - `tools/ha_stub_harness.py` — exercises the real coordinator and entities
   against a **live TV** using lightweight Home Assistant stand-ins, without a
   running HA instance. Edit the `REPO` path at the top to your checkout.
+- `tools/cloud_command_probe.py` — sends one Sony **cloud command** (sleep
+  timer, picture off, playback, …) with the credentials saved by
+  `pair_and_enumerate.py` and prints every HTTP exchange plus the TV's result,
+  for verifying the cloud channel without a packet capture.
 
 ### Regenerating the protobuf stubs
 

@@ -43,7 +43,7 @@ def build_get_states_with_auth_request(
     auth_token: bytes,
 ) -> bytes:
     """
-    Return serialized GetStatesWithAuth request matching BRAVIA Connect captures.
+    Return the serialized GetStatesWithAuth request in the TV's expected layout.
 
     Top-level layout (6558 bytes with 177 paths on fw 001.454):
       field 1 (6521 B): nested path list + embedded session block (field 2 / 0x12)
@@ -90,7 +90,7 @@ def build_small_get_states_with_auth_request(
     Return a single-path GetStatesWithAuth request (app mutex preflight).
 
     Used before ExecCommandWithAuth to obtain a rolling ``auth_token`` for the
-    command body. Layout matches Frida capture for ``client_control.mutex.any``.
+    command body, in the layout the TV expects for ``client_control.mutex.any``.
     """
     if len(session_random) != 8:
         msg = f"session_random must be 8 bytes, got {len(session_random)}"

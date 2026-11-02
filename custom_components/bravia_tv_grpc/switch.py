@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvCloudEntity, BraviaTvEntity
 
 # gRPC bool path -> friendly name. Only surfaced when the device advertises them.
 # The audio/picture ones are conditionally usable; the base entity gates them
@@ -32,6 +32,13 @@ _SWITCHES: dict[str, str] = {
 # the standalone entities (e.g. for automations) can enable them.
 _DISABLED_BY_DEFAULT: frozenset[str] = frozenset({"power", "mute"})
 
+# Cloud-only bool capabilities: cloud name -> (translation key, icon).
+# picture: True = picture on; False = "Picture off" (screen dark, audio keeps
+# playing) -- the TV's own Picture Off function, reachable only via the cloud.
+_CLOUD_SWITCHES: dict[str, tuple[str, str]] = {
+    "picture": ("picture", "mdi:television-ambient-light"),
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -41,11 +48,43 @@ async def async_setup_entry(
     """Set up Bravia TV switch entities from advertised capabilities."""
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
     caps = coordinator.client.capabilities
-    async_add_entities(
+    entities: list[SwitchEntity] = [
         BraviaTvSwitch(coordinator, path, key)
         for path, key in _SWITCHES.items()
         if path in caps and caps[path].type == "bool"
+    ]
+    entities.extend(
+        BraviaTvCloudSwitch(coordinator, name, key, icon)
+        for name, (key, icon) in _CLOUD_SWITCHES.items()
+        if coordinator.cloud_supports(name)
     )
+    async_add_entities(entities)
+
+
+class BraviaTvCloudSwitch(BraviaTvCloudEntity, SwitchEntity):
+    """A cloud-only boolean capability exposed as a switch."""
+
+    def __init__(
+        self,
+        coordinator: BraviaTvCoordinator,
+        cloud_name: str,
+        translation_key: str,
+        icon: str,
+    ) -> None:
+        super().__init__(coordinator, cloud_name)
+        self._attr_translation_key = translation_key
+        self._attr_icon = icon
+
+    @property
+    def is_on(self) -> bool | None:
+        value = self._value
+        return None if value is None else bool(value)
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self._async_cloud_set(True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self._async_cloud_set(False)
 
 
 class BraviaTvSwitch(BraviaTvEntity, SwitchEntity):

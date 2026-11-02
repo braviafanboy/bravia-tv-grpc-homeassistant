@@ -2,7 +2,7 @@
 
 Device: **BRAVIA 8 II** (BRAVIA 8 II), firmware 114.602.080.1EUA, software 4.1.4, destination EU-T2S2.
 
-Enumerated from the Sony Seeds IoT cloud API (`GET /devices` capabilities + `GET /devices/{id}/states`). These are the same control/report fields the ControlDeviceService gRPC plane exposes; the cloud API gives them typed with command verbs and value enums.
+Enumerated from the Sony Seeds IoT cloud API (`GET /devices` capabilities + `GET /devices/{id}/states`). This is the TV's **cloud** capability set, typed with command verbs and value enums. It is a different, much smaller set than the 118-path local gRPC schema below: `power`, `mute` and `volume` exist on both planes; `brightness`, `picture_mode`, `input` and `application` mirror local paths under other names; and `sleep_timer`, `picture` (picture off), `playback`, `seek`, `application.deep_link`, `select_media`, `channel`, `skip_channels`, `search`, `d_pad`, `gui_shortcut`, `access_shortcut`, `speaker_type` and `ui_action` are **cloud-only** and never appear in `GetCapabilities`. See [Sony cloud command channel](#sony-cloud-command-channel).
 
 Total capabilities: **23**. Fields marked reportable appear in the live state snapshot.
 
@@ -76,8 +76,7 @@ typed, with min/max, enum value lists, and `.availability` /
 `.unavailable_reason` / `.prerequisites` sub-fields. Saved to
 `grpc_capabilities.json` (raw) and `grpc_field_paths.json` (typed index). This
 is the authoritative local schema — richer than the 23-field cloud view — and
-is what a BRAVIA Connect packet capture would have recovered, obtained directly
-and read-only. **No packet capture was needed.**
+is obtained directly from the TV, read-only.
 
 Key control paths include `display_setting.picture_mode` (enum incl.
 `professional`, `calibrated`, custom-for-pro variants), `display_setting.brightness`
@@ -92,12 +91,35 @@ REST API produced two notify frames on the gRPC stream, decoded correctly by the
 ported `notify_decode` to `display_setting.brightness`. This is the local push
 channel the whole exercise was after — instant, no polling.
 
-### GetStatesWithAuth (unary snapshot) — not yet working
+### GetStatesWithAuth (unary snapshot) — WORKS
 
-Returns `INVALID_ARGUMENT` (improved from `UNKNOWN` once real field paths were
-used, so paths are recognized). The remaining issue is the TV's exact
-authenticated-request wire format — most likely the 64-byte `session_random`
-session-block encoding, which is ambiguous without a real app capture. **Not blocking:** initial state comes from the
-cloud snapshot (`GET /devices/{id}/states`), and live updates come from
-StartNotifyStates. Nailing the unary snapshot is a follow-up if a
-capture-free derivation isn't found.
+Signed unary read. The request body is the field-path list followed by a
+32-byte HMAC-SHA256 auth tail over the serialized body (see
+`grpc/get_states_request.py` and `grpc/get_states_auth.py`; the wire format
+differs from the `.proto`). The
+integration uses it for the startup bulk seed of every readable path, for a
+single-path (`power`) liveness probe every 60 s, and, nonce-gated via
+`GetNonce`, for the AES-GCM encrypted `system_setting.application_list` read.
+The cloud snapshot (`GET /devices/{id}/states`) is now only a fallback when
+the local read fails.
+
+### Unsigned twins and GenericCommandWithAuth — dead ends
+
+The TV binds `GetStates`, `ExecCommand` and `GetResources` to handlers that
+unconditionally throw `UNAVAILABLE`; they are not auth-gated and there is no
+session state that unlocks them. `CustomSupport` is not bound at all.
+`GenericCommandWithAuth` is a single-client bidirectional stream used by the
+Direct Connect wireless-speaker pairing wizard, not a general command
+channel.
+
+## Sony cloud command channel
+
+The cloud-only capabilities above are driven through the same Sony IoT API the
+integration already signs in to for its session keys: a command is posted to
+the account's message endpoint, Sony delivers it to the TV, the TV executes it
+and reports the outcome (success / failure plus the states that changed), and
+the integration reads that outcome back before updating the entity. See
+`grpc/cloud_commands.py` for the request and result shapes the code relies on
+and `tools/cloud_command_probe.py` to exercise a capability by hand. **Not yet
+verified against a live TV.** These commands leave the local network via the
+user's Sony account; everything else in the integration is local.
