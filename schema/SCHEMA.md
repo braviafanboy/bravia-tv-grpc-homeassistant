@@ -120,6 +120,6 @@ the account's message endpoint, Sony delivers it to the TV, the TV executes it
 and reports the outcome (success / failure plus the states that changed), and
 the integration reads that outcome back before updating the entity. See
 `grpc/cloud_commands.py` for the request and result shapes the code relies on
-and `tools/cloud_command_probe.py` to exercise a capability by hand. **Not yet
-verified against a live TV.** These commands leave the local network via the
+and `tools/cloud_command_probe.py` to exercise a capability by hand (verified on
+the K-65XR8M2, 2026-11-02). These commands leave the local network via the
 user's Sony account; everything else in the integration is local.

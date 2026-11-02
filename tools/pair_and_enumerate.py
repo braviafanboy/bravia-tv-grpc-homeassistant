@@ -35,7 +35,7 @@ import urllib.request
 import uuid
 
 _REPO = Path(__file__).resolve().parent.parent
-_PKG = _REPO / "custom_components" / "bravia_tv"
+_PKG = _REPO / "custom_components" / "bravia_tv_grpc"
 
 # Load the integration's modules under a synthetic package ``btv`` (NOT via the
 # real ``bravia_tv`` package, whose __init__ imports Home Assistant, and NOT by

@@ -16,7 +16,11 @@ Flow:
 2. Sony delivers the message to the TV, which executes it and reports
    ``{result: "SUCCESS"|"FAILURE", error, reports: {changes, states}}``.
 3. ``GET {IOT_BASE_URL}/messages/{id}/result?wait_seconds=N`` long-polls for
-   that report; a reply without a document means "not reported yet".
+   that report. Until the TV has answered the cloud replies HTTP 200 with
+   ``{"device_id": ..., "result": "waiting"}``; afterwards ``result`` is
+   ``"success"`` / ``"failure"`` and ``reports.states`` carries the changed
+   capability plus a baseline bundle (power, volume, mute, playback).
+   Verified live on a BRAVIA 8 II (2026-11-02).
 
 Command shape::
 

@@ -86,6 +86,10 @@ _TV_RESULT = {
         ({**_TV_RESULT, "result": "FAILURE", "error": "POWER_OFF"}, False),
         ({"result": True}, True),
         ({"result": False}, False),
+        # Verified live 2026-11-02: lowercase outcome, and an unanswered poll
+        # answers HTTP 200 with result "waiting".
+        ({"device_id": "dev-1", "result": "success", "reports": {}}, True),
+        ({"device_id": "dev-1", "result": "waiting"}, None),
         ({}, None),
         (None, None),
         ({"data": None}, None),

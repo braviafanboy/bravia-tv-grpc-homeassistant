@@ -122,10 +122,10 @@ cloud-only capabilities (seek, deep links, channel selection, search, D-pad,
 on-screen shortcuts) are reachable the same way but have no entity yet;
 `tools/cloud_command_probe.py` exercises any of them from the command line.
 
-> ⚠️ The cloud command channel has **not yet been exercised against a live
-> TV**. Please confirm with the probe tool (`caps`, then e.g.
-> `send sleep_timer set 30min`) before relying on these entities, and report
-> what the cloud returned.
+Verified on a BRAVIA 8 II: the sleep timer, Picture Off and playback
+commands all execute and report back through the cloud within a second or
+two. On other models, `tools/cloud_command_probe.py caps` shows what the TV
+advertises and `send <name> set <value>` exercises one capability.
 
 ## Soundbar control is out of scope
 
