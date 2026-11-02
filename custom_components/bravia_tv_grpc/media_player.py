@@ -21,14 +21,18 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+import voluptuous as vol
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator, _icon_uri, cloud_path
 from .entity import BraviaTvEntity
 from .grpc import cloud_commands as cloud
 from .grpc.resources import image_content_type
-from .util import parse_json_value, source_label
+from .util import deep_link_package, parse_json_value, source_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,6 +64,20 @@ _SEEK = "seek"
 # Cloud-only tuner channel selection by number (``post {"number": ...}``);
 # surfaced through play_media with media type ``channel``.
 _CHANNEL = "channel"
+# Cloud-only deep link into an app (``post {"package_name", "uri"}``); surfaced
+# through play_media with media type ``url`` (package guessed from the host, or
+# given as ``extra.package_name``). Verified with YouTube.
+_DEEP_LINK = "application.deep_link"
+# Cloud-only Living Decor theme selection (``post {"contentId", "packageName"}``);
+# surfaced through play_media with media type ``theme`` and a ``theme://`` id.
+_SELECT_MEDIA = "select_media"
+_LIVING_DECOR = "com.sony.dtv.livingfit"
+# Cloud-only on-screen search (Sony's voice-search results page); surfaced as
+# the ``search`` entity service. Takes over the screen and audio focus.
+_SEARCH = "search"
+_SEARCH_DISPLAY = "ACTION_SEARCH_AND_DISPLAY_RESULTS"
+_SEARCH_PLAY = "ACTION_SEARCH_AND_PLAY"
+_MEDIA_TYPE_THEME = "theme"
 
 
 async def async_setup_entry(
@@ -72,6 +90,15 @@ async def async_setup_entry(
     caps = coordinator.client.capabilities
     if _POWER in caps:
         async_add_entities([BraviaTvMediaPlayer(coordinator)])
+    if coordinator.cloud_supports(_SEARCH, "post"):
+        entity_platform.async_get_current_platform().async_register_entity_service(
+            "search",
+            {
+                vol.Required("query"): cv.string,
+                vol.Optional("play", default=False): cv.boolean,
+            },
+            "async_search",
+        )
 
 
 class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
@@ -108,7 +135,10 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
                 MediaPlayerEntityFeature.BROWSE_MEDIA
                 | MediaPlayerEntityFeature.PLAY_MEDIA
             )
-        if coordinator.cloud_supports(_CHANNEL, "post"):
+        if any(
+            coordinator.cloud_supports(name, "post")
+            for name in (_CHANNEL, _DEEP_LINK, _SELECT_MEDIA)
+        ):
             features |= MediaPlayerEntityFeature.PLAY_MEDIA
         # Transport controls go through the Sony cloud command channel; only
         # offered when the TV advertised the playback capability there.
@@ -284,18 +314,64 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
     async def async_play_media(
         self, media_type: str, media_id: str, **kwargs: object
     ) -> None:
-        """Launch an app (media_id is the package id) or, with media type
-        ``channel``, tune the tuner to that channel number via the cloud."""
+        """Launch an app (media_id is the package id), or via the cloud:
+        ``channel`` tunes a channel number, ``url`` opens a deep link in the
+        matching app, ``theme`` shows a Living Decor theme (``theme://…``)."""
         if media_type == MediaType.CHANNEL:
             await self.coordinator.async_cloud_command(
                 _CHANNEL, [cloud.post_command(_CHANNEL, {"number": str(media_id)})]
             )
             return
+        if media_type == MediaType.URL:
+            extra = kwargs.get("extra")
+            package = (
+                (extra or {}).get("package_name") if isinstance(extra, dict) else None
+            )
+            package = package or deep_link_package(media_id)
+            if not package:
+                raise HomeAssistantError(
+                    f"No app known for {media_id}; pass extra.package_name"
+                )
+            await self.coordinator.async_cloud_command(
+                _DEEP_LINK,
+                [
+                    cloud.post_command(
+                        _DEEP_LINK, {"package_name": package, "uri": media_id}
+                    )
+                ],
+            )
+            return
+        if media_type == _MEDIA_TYPE_THEME:
+            await self.coordinator.async_cloud_command(
+                _SELECT_MEDIA,
+                [
+                    cloud.post_command(
+                        _SELECT_MEDIA,
+                        {"contentId": media_id, "packageName": _LIVING_DECOR},
+                    )
+                ],
+            )
+            return
         await self.coordinator.async_set_field(_APP, media_id)
+
+    async def async_search(self, query: str, play: bool = False) -> None:
+        """Show Sony's on-screen search results for ``query`` (entity service)."""
+        await self.coordinator.async_cloud_command(
+            _SEARCH,
+            [
+                cloud.post_command(
+                    _SEARCH,
+                    {
+                        "action": _SEARCH_PLAY if play else _SEARCH_DISPLAY,
+                        "search_text": query,
+                    },
+                )
+            ],
+        )
 
     # -- commands ----------------------------------------------------------
     async def async_turn_on(self) -> None:
-        await self.coordinator.async_set_field(_POWER, True)
+        await self.coordinator.async_turn_on_power()
 
     async def async_turn_off(self) -> None:
         await self.coordinator.async_set_field(_POWER, False)

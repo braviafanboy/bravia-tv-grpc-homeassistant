@@ -92,6 +92,9 @@
       },
       "subwoofer_volume": {
         "name": "Subwoofer Volume"
+      },
+      "wired_headphone_volume": {
+        "name": "Wired Headphone Volume"
       }
     },
     "select": {
@@ -112,6 +115,9 @@
       },
       "sleep_timer": {
         "name": "Sleep Timer"
+      },
+      "speaker_type": {
+        "name": "Speaker Type"
       }
     },
     "sensor": {
@@ -180,6 +186,22 @@
     "grpc_port_unreachable": {
       "title": "Bravia TV not reachable",
       "description": "Home Assistant couldn't find the Sony gRPC control service on {host}. Make sure the TV is powered on and on the same network. If mDNS and port scanning are blocked on your network, set the port manually in the integration's options (Settings > Devices & Services > Bravia TV > Configure)."
+    }
+  },
+  "services": {
+    "search": {
+      "name": "Search",
+      "description": "Show Sony's on-screen search results for a query (via the Sony cloud). Takes over the screen and audio focus.",
+      "fields": {
+        "query": {
+          "name": "Query",
+          "description": "Text to search for."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Ask the TV to play the best match instead of showing results (only acts on a confident match)."
+        }
+      }
     }
   }
 }

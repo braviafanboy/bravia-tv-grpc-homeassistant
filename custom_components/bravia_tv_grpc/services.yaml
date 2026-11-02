@@ -1,0 +1,16 @@
+search:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+  fields:
+    query:
+      required: true
+      example: "big buck bunny"
+      selector:
+        text:
+    play:
+      required: false
+      default: false
+      selector:
+        boolean:

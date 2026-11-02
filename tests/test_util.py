@@ -47,3 +47,28 @@ def test_parse_json_value():
     assert util.parse_json_value("not json") is None
     assert util.parse_json_value(None) is None
     assert util.parse_json_value(123) is None
+
+
+def test_deep_link_package_known_hosts():
+    assert util.deep_link_package("https://www.youtube.com/watch?v=x") == (
+        "com.google.android.youtube.tv"
+    )
+    assert (
+        util.deep_link_package("https://youtu.be/x") == "com.google.android.youtube.tv"
+    )
+    assert util.deep_link_package("vnd.youtube:x") == "com.google.android.youtube.tv"
+    assert (
+        util.deep_link_package("https://www.netflix.com/title/1") == "com.netflix.ninja"
+    )
+    assert util.deep_link_package("https://open.spotify.com/track/1") == (
+        "com.spotify.tv.android"
+    )
+    assert util.deep_link_package("https://tv.apple.com/show/x") == (
+        "com.apple.atve.sony.appletv"
+    )
+
+
+def test_deep_link_package_unknown():
+    assert util.deep_link_package("https://example.com/x") is None
+    assert util.deep_link_package("not a url") is None
+    assert util.deep_link_package("") is None

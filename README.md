@@ -72,12 +72,19 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   [Cloud-backed controls](#cloud-backed-controls)).
 - **`remote`** — `remote.send_command` for the TV's keys: Sony on-screen
   shortcut menus (Quick Settings, Audio, Guide, App Menu, Menu, TV), D-pad
-  navigation (up/down/left/right/center/back/home) and channel up/down.
+  navigation (up/down/left/right/center/back/home), channel up/down and the
+  power key. `hold_secs` is honoured for the D-pad keys, back, home, menu and
+  power: under a second is a short press, a second or more is a long press
+  (the TV completes it itself, e.g. long-press centre on the launcher opens
+  an app's card menu).
 - **`select`** — Picture Mode (60+ options incl. Custom for Pro 1/2, calibrated,
   Dolby Vision variants), Content Mode, Theatre Mode, two audio-output group
-  selects: Speakers (TV / audio system) and Bluetooth, and Sleep Timer
-  (cloud-backed).
-- **`number`** — Volume, Brightness, TV Speaker / Bluetooth / HDMI-output
+  selects: Speakers (TV / audio system) and Bluetooth, Sleep Timer
+  (cloud-backed) and Speaker Type (cloud-backed, disabled by default as it
+  overlaps Speakers). Switching an audio output reads the TV's activation
+  result back and raises an error if the switch did not take.
+- **`number`** — Volume, Brightness, TV Speaker / Bluetooth / HDMI-output /
+  Wired Headphone (disabled by default on models without a jack)
   volumes, Voice Zoom, and Rear Speaker / Subwoofer levels for **Direct Connect**
   wireless BRAVIA Theatre speakers paired straight to the TV. On a new install
   the rear / subwoofer levels start **disabled** if the TV reports no such
@@ -85,7 +92,8 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   **Settings → Devices & Services → Entities**.
 - **`switch`** — Power, Mute, Bluetooth 3D Surround, Calibrated Picture Mode,
   and Picture (cloud-backed: off = the TV's *Picture Off*, screen dark with
-  audio playing).
+  audio playing). Power-on falls back to the Sony cloud when the local write
+  fails, which wakes a TV in standby.
 - **`sensor`** — Video Signal (e.g. “4K 24fps Dolby Vision”), Audio Signal (e.g.
   “5.1 Surround Dolby Atmos”, or “PCM” for app audio), App (foreground app /
   active input), App List (installed apps), Bluetooth Device (connected audio
@@ -95,7 +103,8 @@ and current context. On a BRAVIA 8 II this is roughly 35 entities.
   Multiview, Remote Start, and HDMI Linked Device (a Sony/eARC device such as a
   soundbar).
 - **`text`** — the TV's friendly name.
-- **`update`** — firmware update availability.
+- **`update`** — firmware update availability, with the pending version's
+  release notes fetched from Sony's page when one is available.
 
 ## Cloud-backed controls
 
@@ -113,16 +122,23 @@ all:
 | `playback` | `media_player` play / pause / stop / next / previous | drives the foreground app's media session |
 | `seek` | `media_player` seek | absolute position in seconds; needs an app with an active media session |
 | `channel` | `media_player.play_media` with `media_content_type: channel` | tunes the built-in tuner to a channel number |
+| `application.deep_link` | `media_player.play_media` with `media_content_type: url` | opens the URL in its app (YouTube, Netflix, Disney+, Prime Video, Spotify, Twitch, Apple TV recognised by host; otherwise pass `extra: {package_name: …}`) |
+| `select_media` | `media_player.play_media` with `media_content_type: theme` | shows a Living Decor theme, e.g. `theme://skyview` (the ids are not listed by the TV; `theme://skyview`, `theme://naturalandscape`, `theme://monochrome` on a BRAVIA 8 II) |
+| `search` | `bravia_tv_grpc.search` service on the media player | shows Sony's on-screen search results for a query (`play: true` asks the TV to play the best match); takes over the screen and audio focus |
+| `speaker_type` | `select` Speaker Type | TV / audio system (disabled by default) |
+| `power` | power-on fallback | used only when the local write fails, e.g. the TV is in standby |
 
 These are sent through the same Sony account the integration already signs in
 with: a command is posted to Sony's IoT API, Sony delivers it to the TV, and
 the TV's own result (including the new state) is read back before the entity
-updates — a rejected command surfaces as an error rather than a silent no-op. The TV only acts on them while powered on, so the entities show
-as unavailable when it is off. They need internet access and Sony's cloud to
-be up; everything else in the integration stays local-push. The remaining
-cloud-only capabilities (seek, deep links, channel selection, search, D-pad,
-on-screen shortcuts) are reachable the same way but have no entity yet;
-`tools/cloud_command_probe.py` exercises any of them from the command line.
+updates — a rejected command surfaces as an error rather than a silent no-op.
+The TV only acts on them while powered on, so the entities show as
+unavailable when it is off. They need internet access and Sony's cloud to be
+up; everything else in the integration stays local-push. Because the TV
+pushes no changes for these, the cloud snapshot is also polled every five
+minutes so a sleep timer set with the TV remote shows up within that time.
+`tools/cloud_command_probe.py` exercises any cloud capability from the
+command line.
 
 Verified on a BRAVIA 8 II: the sleep timer, Picture Off, playback and seek
 commands all execute and report back through the cloud within a second or

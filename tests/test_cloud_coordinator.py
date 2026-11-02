@@ -201,3 +201,70 @@ async def test_power_off_clears_sleep_timer(hass: HomeAssistant) -> None:
     coordinator._apply_delta("power", False)
     assert coordinator.data[cloud_path("sleep_timer")] == "off"
     await coordinator.async_shutdown()
+
+
+async def test_cloud_poll_mirrors_cloud_only_states(hass: HomeAssistant) -> None:
+    coordinator = BraviaTvCoordinator(hass, _entry(hass), _client())
+    p1, p2 = _cloud_patches()
+    with p1, p2:
+        await coordinator.async_start()
+    assert coordinator.data[cloud_path("sleep_timer")] == "off"
+    changed = {
+        "states": [
+            {"name": "sleep_timer", "value": "30min", "type": "enum"},
+            {"name": "power", "value": False, "type": "bool"},  # not mirrored
+        ]
+    }
+    with patch(
+        f"{COORD}.cred.async_get_device_states", new=AsyncMock(return_value=changed)
+    ):
+        await coordinator._async_cloud_poll()
+    assert coordinator.data[cloud_path("sleep_timer")] == "30min"
+    assert coordinator.data["power"] is True
+    await coordinator.async_shutdown()
+
+
+async def test_turn_on_falls_back_to_cloud(hass: HomeAssistant) -> None:
+    client = _client()
+    client.exec_command.return_value = False  # local write rejected
+    coordinator = BraviaTvCoordinator(hass, _entry(hass), client)
+    p1, p2 = _cloud_patches()
+    run = AsyncMock(return_value={"result": "SUCCESS"})
+    device = dict(_DEVICE)
+    device["capabilities"] = _DEVICE["capabilities"] + [
+        {"name": "power", "type": "bool", "props": {"commands": ["set"]}}
+    ]
+    with (
+        patch(
+            f"{COORD}.cred.async_get_devices",
+            new=AsyncMock(return_value={"devices": [device]}),
+        ),
+        p2,
+        patch(f"{COORD}.cloud.async_run_commands", new=run),
+    ):
+        await coordinator.async_start()
+        coordinator._apply_delta("power", False)
+        await coordinator.async_turn_on_power()
+    assert run.await_args.args[3] == [
+        {"name": "power", "command": "set", "args": {"value": True}}
+    ]
+    assert coordinator.data["power"] is True
+    await coordinator.async_shutdown()
+
+
+async def test_read_paths_merges_state(hass: HomeAssistant) -> None:
+    client = _client()
+    coordinator = BraviaTvCoordinator(hass, _entry(hass), client)
+    with patch(
+        f"{COORD}.cred.async_get_devices", new=AsyncMock(side_effect=OSError("x"))
+    ):
+        await coordinator.async_start()
+    client.get_states.return_value = {
+        "sound_setting.audio_output.activation_result": True
+    }
+    got = await coordinator.async_read_paths(
+        ["sound_setting.audio_output.activation_result"]
+    )
+    assert got == {"sound_setting.audio_output.activation_result": True}
+    assert coordinator.data["sound_setting.audio_output.activation_result"] is True
+    await coordinator.async_shutdown()

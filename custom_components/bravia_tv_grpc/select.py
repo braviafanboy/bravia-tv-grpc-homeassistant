@@ -7,12 +7,14 @@ HTTP REST integration could not enumerate.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -36,6 +38,10 @@ _LOGGER = logging.getLogger(__name__)
 _AUDIO_ACTIVE = "sound_setting.audio_output.active_devices"
 _AUDIO_AVAILABLE = "sound_setting.audio_output.available_devices"
 _AUDIO_ACTIVATE = "sound_setting.audio_output.activate_devices"
+# Reports whether the last activate_devices took effect (verified live: true
+# after each successful switch). Read back, with active_devices, to confirm.
+_AUDIO_RESULT = "sound_setting.audio_output.activation_result"
+_AUDIO_CONFIRM_DELAY = 1.5
 _OFF = "Off"
 
 # gRPC enum path -> (friendly name, icon). Options come from the capability.
@@ -54,15 +60,24 @@ _SELECTS: dict[str, tuple[str, str]] = {
 # Cloud-only enum capabilities (no local gRPC path): cloud name -> (translation
 # key, icon). Options come from the TV's advertised cloud capability values.
 # sleep_timer: "off" | "15min" ... "120min"; the TV clears it on power-off.
+# speaker_type (tv / audio_system) overlaps the local Speakers select, so it is
+# created disabled by default.
 _CLOUD_SELECTS: dict[str, tuple[str, str]] = {
     "sleep_timer": ("sleep_timer", "mdi:timer-sand"),
+    "speaker_type": ("speaker_type", "mdi:speaker-multiple"),
 }
+_CLOUD_DISABLED_BY_DEFAULT = {"speaker_type"}
+_CLOUD_ACRONYMS = {"tv": "TV", "hdmi": "HDMI"}
 
 
 def _cloud_label(value: str) -> str:
-    """``15min`` -> ``15 min``, ``off`` -> ``Off``."""
+    """``15min`` -> ``15 min``, ``audio_system`` -> ``Audio System``."""
     if value.endswith("min") and value[:-3].isdigit():
         return f"{value[:-3]} min"
+    if "_" in value or value in _CLOUD_ACRONYMS:
+        return " ".join(
+            _CLOUD_ACRONYMS.get(w, w.capitalize()) for w in value.split("_")
+        )
     return friendly_enum_label(value)
 
 
@@ -110,6 +125,8 @@ class BraviaTvCloudSelect(BraviaTvCloudEntity, SelectEntity):
         self._attr_translation_key = translation_key
         self._attr_icon = icon
         self._raw_options = list(options)
+        if cloud_name in _CLOUD_DISABLED_BY_DEFAULT:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def options(self) -> list[str]:
@@ -251,6 +268,17 @@ class BraviaTvAudioGroupSelect(BraviaTvEntity, SelectEntity):
                 _LOGGER.warning("Unknown %s output: %s", self._group, option)
                 return
             chosen = [target]
-        await self.coordinator.async_set_field(
-            _AUDIO_ACTIVATE, json.dumps(preserved + chosen)
-        )
+        wanted = preserved + chosen
+        await self.coordinator.async_set_field(_AUDIO_ACTIVATE, json.dumps(wanted))
+        # The write returns before the switch completes; confirm it took.
+        await asyncio.sleep(_AUDIO_CONFIRM_DELAY)
+        states = await self.coordinator.async_read_paths([_AUDIO_ACTIVE, _AUDIO_RESULT])
+        active = parse_json_value(states.get(_AUDIO_ACTIVE))
+        if states.get(_AUDIO_RESULT) is False or (
+            isinstance(active, list) and not set(wanted) <= set(active)
+        ):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="exec_rejected",
+                translation_placeholders={"path": _AUDIO_ACTIVATE},
+            )

@@ -58,6 +58,13 @@ CLOUD_PREFIX = "cloud."
 # Overall budget for the best-effort cloud load at startup; the TV is already
 # fully usable from the local plane before this runs.
 _CLOUD_LOAD_TIMEOUT = 15
+# Cloud-only states have no push. The TV uploads its cloud snapshot on its own
+# (debounced) schedule, so a slow poll catches changes made with the TV remote
+# (e.g. a sleep timer set on the TV) within a few minutes.
+_CLOUD_POLL_INTERVAL = timedelta(minutes=5)
+# Cloud snapshot names mirrored into ``cloud.*`` by the poll: the ones with no
+# local path (everything else is already push-updated locally).
+_CLOUD_POLLED_NAMES = ("sleep_timer", "picture", "playback", "speaker_type")
 
 
 def cloud_path(name: str) -> str:
@@ -133,6 +140,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cloud_token: str | None = None
         self._cloud_token_expires_at = 0.0
         self._cloud_lock = asyncio.Lock()
+        self._cancel_cloud_poll: Any = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -157,6 +165,10 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cancel_refresh = async_track_time_interval(
             self.hass, self._async_periodic_refresh, _REFRESH_INTERVAL
         )
+        if self.cloud_capabilities:
+            self._cancel_cloud_poll = async_track_time_interval(
+                self.hass, self._async_cloud_poll, _CLOUD_POLL_INTERVAL
+            )
         await self._async_refresh_app_list()
 
     async def _async_refresh_app_list(self) -> None:
@@ -440,6 +452,61 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             len(snapshot.get("states", [])),
         )
 
+    async def _async_cloud_poll(self, _now: Any = None) -> None:
+        """Mirror the cloud-only states from the TV's cloud snapshot."""
+        creds = self._cloud_credentials()
+        device_id = self._cloud_device_id(creds) if creds else None
+        if not device_id:
+            return
+        try:
+            async with asyncio.timeout(_CLOUD_LOAD_TIMEOUT):
+                token = await self._async_cloud_token()
+                snapshot = await cred.async_get_device_states(
+                    async_get_clientsession(self.hass), device_id, token
+                )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("cloud snapshot poll failed", exc_info=True)
+            return
+        changed = False
+        for item in snapshot.get("states", []):
+            name = item.get("name")
+            if name in _CLOUD_POLLED_NAMES:
+                path = cloud_path(name)
+                if self._state.get(path) != item.get("value"):
+                    self._state[path] = item.get("value")
+                    changed = True
+        if changed:
+            self.async_set_updated_data(dict(self._state))
+
+    async def async_read_paths(self, paths: list[str]) -> dict[str, Any]:
+        """Read ``paths`` from the TV now, merge them into state, return them.
+
+        Used to confirm a write whose effect is not pushed reliably (e.g. an
+        audio-output switch, where ``activation_result`` reports the outcome).
+        """
+        states = await self.hass.async_add_executor_job(self.client.get_states, paths)
+        if states:
+            self._state.update(states)
+            self.async_set_updated_data(dict(self._state))
+        return states or {}
+
+    async def async_turn_on_power(self) -> None:
+        """Power on: local gRPC first, Sony cloud as the standby fallback.
+
+        A TV in deep standby may not answer on the local plane, but its Seeds
+        service still receives cloud commands (verified: a cloud ``power`` set
+        wakes the TV). Fall back to that when the local write fails.
+        """
+        try:
+            await self.async_set_field("power", True)
+            return
+        except Exception as err:  # noqa: BLE001
+            if not self.cloud_supports("power"):
+                raise
+            _LOGGER.info("local power-on failed (%s); trying the Sony cloud", err)
+        await self.async_cloud_command("power", [cloud.set_command("power", True)])
+        self._apply_delta("power", True)
+
     def cloud_supports(self, name: str, command: str = "set") -> bool:
         """Whether the TV advertised ``command`` for cloud capability ``name``."""
         return command in self.cloud_capabilities.get(name, ())
@@ -583,5 +650,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._cancel_refresh is not None:
             self._cancel_refresh()
             self._cancel_refresh = None
+        if self._cancel_cloud_poll is not None:
+            self._cancel_cloud_poll()
+            self._cancel_cloud_poll = None
         await self.hass.async_add_executor_job(self.client.close)
         await super().async_shutdown()

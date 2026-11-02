@@ -62,6 +62,44 @@ def parse_json_value(raw: Any) -> Any | None:
         return None
 
 
+# Well-known streaming hosts -> Android TV package, so a deep link can be
+# played from a bare URL. ``extra.package_name`` on play_media overrides this.
+_DEEP_LINK_PACKAGES: dict[str, str] = {
+    "youtube.com": "com.google.android.youtube.tv",
+    "youtu.be": "com.google.android.youtube.tv",
+    "netflix.com": "com.netflix.ninja",
+    "disneyplus.com": "com.disney.disneyplus",
+    "primevideo.com": "com.amazon.amazonvideo.livingroom",
+    "amazon.com": "com.amazon.amazonvideo.livingroom",
+    "amazon.co.uk": "com.amazon.amazonvideo.livingroom",
+    "spotify.com": "com.spotify.tv.android",
+    "twitch.tv": "tv.twitch.android.app",
+    "tv.apple.com": "com.apple.atve.sony.appletv",
+}
+
+
+def deep_link_package(uri: str) -> str | None:
+    """Guess the Android TV package that should open ``uri``, or None.
+
+    Matches the host (and any parent domain) against the known streaming
+    services; ``vnd.youtube:`` style scheme links map by scheme name.
+    """
+    if not isinstance(uri, str) or not uri:
+        return None
+    if uri.startswith("vnd.youtube:"):
+        return _DEEP_LINK_PACKAGES["youtube.com"]
+    match = re.match(r"^[a-z][a-z0-9+.-]*://([^/?#]+)", uri, re.IGNORECASE)
+    if not match:
+        return None
+    host = match.group(1).lower().split("@")[-1].split(":")[0]
+    parts = host.split(".")
+    for i in range(len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        if candidate in _DEEP_LINK_PACKAGES:
+            return _DEEP_LINK_PACKAGES[candidate]
+    return None
+
+
 def source_label(value: object) -> str | None:
     """Extract a display source label from a ``tvapp.input`` value.
 

@@ -18,10 +18,16 @@ from .entity import BraviaTvEntity
 # (observed: bluetooth uses .visibility, voice_zoom uses .availability), so they
 # show unavailable when their output isn't active.
 #
-# wired_headphone is intentionally omitted: this TV model has no headphone jack.
+# wired_headphone exists on models with a headphone jack; its .visibility
+# companion is False on models without one (verified: writes are rejected
+# then), so the entity is created disabled by default when hidden at setup.
 # gRPC int path -> (entity translation key, icon). Name comes from strings.json.
 _NUMBERS: dict[str, tuple[str, str]] = {
     "volume": ("volume", "mdi:volume-high"),
+    "sound_setting.volume.wired_headphone": (
+        "wired_headphone_volume",
+        "mdi:headphones",
+    ),
     "display_setting.brightness": ("brightness", "mdi:brightness-6"),
     "sound_setting.volume.tv_speaker": ("tv_speaker_volume", "mdi:speaker"),
     "sound_setting.volume.bluetooth": ("bluetooth_volume", "mdi:bluetooth-audio"),
@@ -58,6 +64,8 @@ _DISABLED_UNTIL_PAIRED = {
     "sound_setting.volume.subwoofer",
 }
 _NEVER_PAIRED = "no_connection_history"
+# Disabled by default while the TV reports the control hidden (no such jack).
+_DISABLED_WHEN_HIDDEN = {"sound_setting.volume.wired_headphone"}
 
 
 async def async_setup_entry(
@@ -90,10 +98,17 @@ class BraviaTvNumber(BraviaTvEntity, NumberEntity):
         super().__init__(coordinator, grpc_path)
         self._attr_translation_key = translation_key
         self._attr_icon = icon
-        if grpc_path in _DISABLED_BY_DEFAULT or (
-            grpc_path in _DISABLED_UNTIL_PAIRED
-            and (coordinator.data or {}).get(f"{grpc_path}.unavailable_reason")
-            == _NEVER_PAIRED
+        data = coordinator.data or {}
+        if (
+            grpc_path in _DISABLED_BY_DEFAULT
+            or (
+                grpc_path in _DISABLED_UNTIL_PAIRED
+                and data.get(f"{grpc_path}.unavailable_reason") == _NEVER_PAIRED
+            )
+            or (
+                grpc_path in _DISABLED_WHEN_HIDDEN
+                and data.get(f"{grpc_path}.visibility") is False
+            )
         ):
             self._attr_entity_registry_enabled_default = False
         meta = coordinator.client.capabilities.get(grpc_path)

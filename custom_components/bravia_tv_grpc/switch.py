@@ -35,9 +35,13 @@ _DISABLED_BY_DEFAULT: frozenset[str] = frozenset({"power", "mute"})
 # Cloud-only bool capabilities: cloud name -> (translation key, icon).
 # picture: True = picture on; False = "Picture off" (screen dark, audio keeps
 # playing) -- the TV's own Picture Off function, reachable only via the cloud.
+# access_shortcut (the accessibility shortcut) is advertised too, but the
+# BRAVIA 8 II answers every write with an internal error and never reports
+# it back, so it is deliberately not exposed.
 _CLOUD_SWITCHES: dict[str, tuple[str, str]] = {
     "picture": ("picture", "mdi:television-ambient-light"),
 }
+_CLOUD_ASSUMED_STATE: frozenset[str] = frozenset()
 
 
 async def async_setup_entry(
@@ -74,6 +78,8 @@ class BraviaTvCloudSwitch(BraviaTvCloudEntity, SwitchEntity):
         super().__init__(coordinator, cloud_name)
         self._attr_translation_key = translation_key
         self._attr_icon = icon
+        if cloud_name in _CLOUD_ASSUMED_STATE:
+            self._attr_assumed_state = True
 
     @property
     def is_on(self) -> bool | None:
@@ -106,6 +112,9 @@ class BraviaTvSwitch(BraviaTvEntity, SwitchEntity):
         return None if value is None else bool(value)
 
     async def async_turn_on(self, **kwargs: object) -> None:
+        if self._grpc_path == "power":
+            await self.coordinator.async_turn_on_power()
+            return
         await self._async_set(True)
 
     async def async_turn_off(self, **kwargs: object) -> None:
