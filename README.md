@@ -112,6 +112,7 @@ all:
 | `picture` | `switch` Picture | off = *Picture Off* (panel dark, audio continues) |
 | `playback` | `media_player` play / pause / stop / next / previous | drives the foreground app's media session |
 | `seek` | `media_player` seek | absolute position in seconds; needs an app with an active media session |
+| `channel` | `media_player.play_media` with `media_content_type: channel` | tunes the built-in tuner to a channel number |
 
 These are sent through the same Sony account the integration already signs in
 with: a command is posted to Sony's IoT API, Sony delivers it to the TV, and

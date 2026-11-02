@@ -57,6 +57,9 @@ _PLAYBACK = "playback"
 # Cloud-only absolute seek: ``set`` takes seconds; the TV reports the resulting
 # position in milliseconds. Needs an app with an active media session.
 _SEEK = "seek"
+# Cloud-only tuner channel selection by number (``post {"number": ...}``);
+# surfaced through play_media with media type ``channel``.
+_CHANNEL = "channel"
 
 
 async def async_setup_entry(
@@ -98,12 +101,15 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         if _APP in caps or _INPUT_SET in caps:
             features |= MediaPlayerEntityFeature.SELECT_SOURCE
         # BROWSE_MEDIA exposes the installed apps as a thumbnail grid (icons via
-        # async_get_browse_image); PLAY_MEDIA launches the chosen app.
+        # async_get_browse_image); PLAY_MEDIA launches the chosen app, or tunes
+        # a channel by number through the cloud when the TV advertises that.
         if _APP in caps:
             features |= (
                 MediaPlayerEntityFeature.BROWSE_MEDIA
                 | MediaPlayerEntityFeature.PLAY_MEDIA
             )
+        if coordinator.cloud_supports(_CHANNEL, "post"):
+            features |= MediaPlayerEntityFeature.PLAY_MEDIA
         # Transport controls go through the Sony cloud command channel; only
         # offered when the TV advertised the playback capability there.
         if coordinator.cloud_supports(_PLAYBACK):
@@ -278,7 +284,13 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
     async def async_play_media(
         self, media_type: str, media_id: str, **kwargs: object
     ) -> None:
-        """Launch an app chosen from the browser (media_id is the package id)."""
+        """Launch an app (media_id is the package id) or, with media type
+        ``channel``, tune the tuner to that channel number via the cloud."""
+        if media_type == MediaType.CHANNEL:
+            await self.coordinator.async_cloud_command(
+                _CHANNEL, [cloud.post_command(_CHANNEL, {"number": str(media_id)})]
+            )
+            return
         await self.coordinator.async_set_field(_APP, media_id)
 
     # -- commands ----------------------------------------------------------
