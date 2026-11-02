@@ -83,6 +83,18 @@ Key control paths include `display_setting.picture_mode` (enum incl.
 (int 0–50), `sound_setting.volume.tv_speaker`, `system_setting.input`, `power`,
 `mute`, `remote_key.*`, `display_and_sound_setting.content_mode`, etc.
 
+### The `security` prop (nonce-gated fields)
+
+A capability's `props` may carry `security` with `execcommand_request` and/or
+`getstates_request` set to `"nonce"`. Such a field must be read or written
+with a fresh `GetNonce` nonce in place of the session random in the signed
+request's session block, and its reads come back AES-GCM encrypted. On the
+K-65XR8M2 only `system_setting.application_list` is marked, and it advertises
+no commands, so the integration implements the nonce-gated **read** (the
+installed-app list) and has no field to write through the nonce path. Other
+models may mark more fields; the write variant is the same session block
+with the nonce slot filled.
+
 ### StartNotifyStates (push) — WORKS
 
 Server-streaming RPC, request is just `session_id` (no auth token / session
