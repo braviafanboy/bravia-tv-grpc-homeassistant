@@ -313,7 +313,7 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         if media and media.get("active") and media.get("artwork_url"):
             art = await self.coordinator.async_get_agent_artwork()
             if art:
-                return art, "image/png"
+                return art, image_content_type(art)
         data = await self.coordinator.async_get_app_icon(self._current_app_package)
         if not data:
             return None, None
