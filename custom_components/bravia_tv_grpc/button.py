@@ -25,7 +25,8 @@ async def async_setup_entry(
 
 class BraviaTvAgentSetupButton(BraviaTvAgentEntity, ButtonEntity):
     """Opens the agent's permission screens on the TV (Notification access
-    for now-playing, Bluetooth for the remote's battery)."""
+    for now-playing, Bluetooth for the remote's battery, Install unknown apps
+    for updates). Reports instead of touching the TV when nothing is missing."""
 
     _attr_translation_key = "agent_setup"
     _attr_entity_category = EntityCategory.CONFIG

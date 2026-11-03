@@ -209,8 +209,11 @@ automatic.
    the agent from Home Assistant needs *Install unknown apps*; Android only
    grants these through its own prompts on the TV. Press the **Agent
    setup** button on the TV's device page in Home Assistant, or open the
-   BRAVIA agent app from the TV's launcher, and accept the two prompts with
-   the remote. A repair notice reminds you while either is missing. While
+   BRAVIA agent app from the TV's launcher and press OK, then accept the
+   prompts with the remote; the agent closes again once nothing is missing.
+   If everything is already granted, the button says so in Home Assistant and
+   does not touch the TV. A repair notice reminds you while now-playing or
+   the remote's battery is missing a grant. While
    adb is still connected, the same two grants are:
 
    ```

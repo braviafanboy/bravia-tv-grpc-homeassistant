@@ -52,6 +52,9 @@
     },
     "cloud_invalid_value": {
       "message": "{name}: {value} is not one of the values the TV advertises ({allowed})"
+    },
+    "agent_setup_complete": {
+      "message": "Nothing to set up: the BRAVIA agent on {name} already has every permission it needs."
     }
   },
   "entity": {

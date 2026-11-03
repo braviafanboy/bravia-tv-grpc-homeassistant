@@ -417,6 +417,81 @@ async def test_agent_setup_prefers_cloud_deep_link(hass: HomeAssistant):
     await coordinator.async_shutdown()
 
 
+async def test_agent_setup_skips_tv_when_everything_is_granted(hass: HomeAssistant):
+    from homeassistant.exceptions import ServiceValidationError
+
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    sent: list[dict] = []
+
+    def configure(f):
+        f.info = {
+            **_INFO,
+            "permissions": {
+                "notification_access": True,
+                "bluetooth_connect": True,
+                "install_packages": True,
+            },
+        }
+
+    async def fake_cloud(name, commands):
+        sent.append(commands[0])
+        return {}
+
+    with patch(
+        f"{COORD}.BraviaTvCoordinator.async_cloud_command", side_effect=fake_cloud
+    ):
+        coordinator = await _start(
+            hass,
+            entry,
+            fakes,
+            configure=configure,
+            cloud_caps={"application.deep_link": ("post",)},
+        )
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+        with pytest.raises(ServiceValidationError) as err:
+            await coordinator.async_agent_setup()
+    assert err.value.translation_key == "agent_setup_complete"
+    assert not sent
+    coordinator.client.exec_command.assert_not_called()
+    await coordinator.async_shutdown()
+
+
+async def test_agent_setup_launches_when_a_grant_is_missing(hass: HomeAssistant):
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    sent: list[dict] = []
+
+    def configure(f):
+        f.info = {
+            **_INFO,
+            "permissions": {
+                "notification_access": True,
+                "bluetooth_connect": True,
+                "install_packages": False,
+            },
+        }
+
+    async def fake_cloud(name, commands):
+        sent.append(commands[0])
+        return {}
+
+    with patch(
+        f"{COORD}.BraviaTvCoordinator.async_cloud_command", side_effect=fake_cloud
+    ):
+        coordinator = await _start(
+            hass,
+            entry,
+            fakes,
+            configure=configure,
+            cloud_caps={"application.deep_link": ("post",)},
+        )
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+        await coordinator.async_agent_setup()
+    assert sent and sent[0]["args"]["uri"] == agentmod.SETUP_DEEP_LINK
+    await coordinator.async_shutdown()
+
+
 async def test_agent_update_entity_flow(hass: HomeAssistant):
     """Manifest → latest version; install stages the APK and opens the updater."""
     entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})

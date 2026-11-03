@@ -98,6 +98,16 @@ def missing_permissions(info: dict[str, Any]) -> list[str]:
     ]
 
 
+def setup_complete(info: dict[str, Any]) -> bool:
+    """True only when the agent reports every grant its setup flow asks for
+    (unknown counts as not complete)."""
+    perms = info.get("permissions") or {}
+    return all(
+        perms.get(k) is True
+        for k in ("notification_access", "bluetooth_connect", "install_packages")
+    )
+
+
 def parse_sse(lines: Iterable[str]) -> Iterable[tuple[str, str]]:
     """Yield ``(event, data)`` pairs from Server-Sent Events text lines.
 

@@ -21,7 +21,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
@@ -452,7 +452,16 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_agent_setup(self) -> None:
         """Open the agent's permission screens on the TV: through the cloud
-        deep link when available, else by launching the app locally."""
+        deep link when available, else by launching the app locally. Does
+        nothing on the TV when the agent reports every grant already."""
+        if self.agent is not None and self._state.get(AGENT_ONLINE):
+            await self.async_agent_refresh_info()
+            if agentmod.setup_complete(self.agent_info):
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="agent_setup_complete",
+                    translation_placeholders={"name": self.device_name},
+                )
         if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
             await self.async_cloud_command(
                 _AGENT_DEEP_LINK,
