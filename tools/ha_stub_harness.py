@@ -13,12 +13,20 @@ import asyncio
 import importlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import types
 
 REPO = Path(__file__).resolve().parents[1]
 PKG = REPO / "custom_components" / "bravia_tv_grpc"
+
+# The TV's LAN address, and (optional) the pre-shared key of its REST IP-control
+# API for the push test, which changes brightness through that second channel.
+# Neither is stored here: the REST key is a credential and the API is plain
+# HTTP on port 80, so set them in the environment of the shell that runs this.
+TV_HOST = os.environ.get("BRAVIA_HOST", "192.0.2.10")
+REST_PSK = os.environ.get("BRAVIA_REST_PSK")
 
 
 # ---- build stub `homeassistant` package tree --------------------------------
@@ -309,7 +317,7 @@ async def main():
     hass = HomeAssistant(loop)
     entry = ConfigEntry(
         data={
-            "host": "192.0.2.10",
+            "host": TV_HOST,
             "grpc_port": 36547,
             "grpc_device_id": creds["device_id"],
             "grpc_keys": json.dumps(creds),
@@ -317,7 +325,7 @@ async def main():
         unique_id=creds["device_id"],
     )
     client = BraviaTvGrpcClient(
-        "192.0.2.10",
+        TV_HOST,
         36547,
         creds["device_id"],
         creds["hmac_key"],
@@ -393,16 +401,18 @@ async def main():
             {"method": method, "params": params, "id": 1, "version": "1.0"}
         ).encode()
         req = urllib.request.Request(
-            f"http://192.0.2.10/sony/{service}",
+            f"http://{TV_HOST}/sony/{service}",
             body,
-            {"Content-Type": "application/json", "X-Auth-PSK": "sony"},
+            {"Content-Type": "application/json", "X-Auth-PSK": REST_PSK},
         )
         return json.load(urllib.request.urlopen(req, timeout=8))
 
     bright = next(
         (e for e in collected if getattr(e, "name", "") == "Brightness"), None
     )
-    if bright is not None:
+    if REST_PSK is None:
+        print("\nPUSH test skipped: set BRAVIA_REST_PSK to the TV's IP-control key")
+    elif bright is not None:
         start = bright.native_value
         target = 16 if start != 16 else 17
         print(

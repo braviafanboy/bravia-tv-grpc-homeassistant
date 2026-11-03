@@ -481,7 +481,12 @@ pure wire-decode tests run on any Python.
   model.
 - `tools/ha_stub_harness.py` — exercises the real coordinator and entities
   against a **live TV** using lightweight Home Assistant stand-ins, without a
-  running HA instance. Edit the `REPO` path at the top to your checkout.
+  running HA instance. Set `BRAVIA_HOST` to the TV's address; its optional
+  push test also needs `BRAVIA_REST_PSK`, the pre-shared key of the TV's REST
+  IP control (Settings → Network → Home network setup → IP control), which
+  it uses to change brightness through that second channel and watch the
+  change arrive over gRPC. That API is plain HTTP, so the key crosses the LAN
+  in clear; the test is skipped when the variable is unset.
 - `tools/cloud_command_probe.py` — sends one Sony **cloud command** (sleep
   timer, picture off, playback, …) with the credentials saved by
   `pair_and_enumerate.py` and prints every HTTP exchange plus the TV's result,
