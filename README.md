@@ -485,8 +485,11 @@ pure wire-decode tests run on any Python.
   push test also needs `BRAVIA_REST_PSK`, the pre-shared key of the TV's REST
   IP control (Settings → Network → Home network setup → IP control), which
   it uses to change brightness through that second channel and watch the
-  change arrive over gRPC. That API is plain HTTP, so the key crosses the LAN
-  in clear; the test is skipped when the variable is unset.
+  change arrive over gRPC. The harness talks HTTPS on port 443, which the TV
+  serves (with its own self-signed certificate, so not verified) once its
+  IP-control HTTPS setting is on; that setting also closes plain HTTP on port
+  80. Set `BRAVIA_REST_SCHEME=http` for a TV without it, where the key then
+  crosses the LAN in clear. The test is skipped when the key is unset.
 - `tools/cloud_command_probe.py` — sends one Sony **cloud command** (sleep
   timer, picture off, playback, …) with the credentials saved by
   `pair_and_enumerate.py` and prints every HTTP exchange plus the TV's result,

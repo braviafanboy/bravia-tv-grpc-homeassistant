@@ -23,10 +23,14 @@ PKG = REPO / "custom_components" / "bravia_tv_grpc"
 
 # The TV's LAN address, and (optional) the pre-shared key of its REST IP-control
 # API for the push test, which changes brightness through that second channel.
-# Neither is stored here: the REST key is a credential and the API is plain
-# HTTP on port 80, so set them in the environment of the shell that runs this.
+# Neither is stored here: the REST key is a credential, so set them in the
+# environment of the shell that runs this. The REST API is HTTPS on port 443
+# (self-signed, issued by the TV's own "Sony TV Root CA", so not verified
+# here) when the TV's IP-control setting for it is on, which also closes the
+# plain-HTTP port 80 with 403; set BRAVIA_REST_SCHEME=http for a TV without it.
 TV_HOST = os.environ.get("BRAVIA_HOST", "192.0.2.10")
 REST_PSK = os.environ.get("BRAVIA_REST_PSK")
+REST_SCHEME = os.environ.get("BRAVIA_REST_SCHEME", "https")
 
 
 # ---- build stub `homeassistant` package tree --------------------------------
@@ -394,18 +398,23 @@ async def main():
     # Prove PUSH end-to-end: change brightness via a DIFFERENT channel (REST),
     # then confirm the gRPC notify stream updated the Brightness entity through
     # the coordinator (not via our own optimistic exec).
+    import ssl
     import urllib.request
+
+    rest_ctx = ssl.create_default_context()
+    rest_ctx.check_hostname = False
+    rest_ctx.verify_mode = ssl.CERT_NONE  # the TV's certificate is self-signed
 
     def rest(service, method, params):
         body = json.dumps(
             {"method": method, "params": params, "id": 1, "version": "1.0"}
         ).encode()
         req = urllib.request.Request(
-            f"http://{TV_HOST}/sony/{service}",
+            f"{REST_SCHEME}://{TV_HOST}/sony/{service}",
             body,
             {"Content-Type": "application/json", "X-Auth-PSK": REST_PSK},
         )
-        return json.load(urllib.request.urlopen(req, timeout=8))
+        return json.load(urllib.request.urlopen(req, timeout=8, context=rest_ctx))
 
     bright = next(
         (e for e in collected if getattr(e, "name", "") == "Brightness"), None
