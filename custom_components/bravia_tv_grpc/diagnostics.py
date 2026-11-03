@@ -73,7 +73,15 @@ def _diagnostics(
         },
         "state": async_redact_data(dict(coordinator.data or {}), TO_REDACT),
         "app_list": [
-            {"id": app.get("id"), "label": app.get("label")}
+            {
+                "id": app.get("id"),
+                "label": app.get("label"),
+                "resource_types": [
+                    r.get("type")
+                    for r in (app.get("resources") or [])
+                    if isinstance(r, dict)
+                ],
+            }
             for app in coordinator.app_list
         ],
     }

@@ -117,6 +117,10 @@ class BraviaTvGrpcClient:
 
         self._notify_thread: threading.Thread | None = None
         self._notify_stop = threading.Event()
+        # Nonce-gated reads must not interleave: the TV hands out single-use
+        # nonces and only the latest is valid, so GetNonce + the read that
+        # consumes it run under one lock (HA fires app-icon reads in parallel).
+        self._nonce_lock = threading.Lock()
         self._on_delta: DeltaCallback | None = None
         self._on_connection_lost: Callable[[], None] | None = None
         self._on_reconnect: Callable[[], None] | None = None
@@ -240,6 +244,10 @@ class BraviaTvGrpcClient:
             raise BraviaTvConnectionError("not connected")
         if not self._session_key:
             raise BraviaTvConnectionError("session_key required for application_list")
+        with self._nonce_lock:
+            return self._nonce_gated(self._read_application_list_once, timeout)
+
+    def _read_application_list_once(self, timeout: float) -> list[dict]:
         nonce = self._get_nonce(timeout)
         req = build_application_list_request(
             session_random=self._session_random,
@@ -263,6 +271,12 @@ class BraviaTvGrpcClient:
             raise BraviaTvConnectionError("not connected")
         if not self._session_key:
             raise BraviaTvConnectionError("session_key required for resources")
+        with self._nonce_lock:
+            return self._nonce_gated(
+                lambda t: self._read_resource_once(uri, t), timeout
+            )
+
+    def _read_resource_once(self, uri: str, timeout: float) -> bytes:
         nonce = self._get_nonce(timeout)
         req = build_get_resource_request(
             uri=uri,
@@ -275,6 +289,17 @@ class BraviaTvGrpcClient:
         return parse_get_resource_response(
             call(req, timeout=timeout), self._session_key
         )
+
+    def _nonce_gated(self, read: Any, timeout: float) -> Any:
+        """Run a nonce-gated read, retrying once with a fresh nonce when the TV
+        answers INVALID_ARGUMENT (its reply to a stale or consumed nonce)."""
+        try:
+            return read(timeout)
+        except grpc.RpcError as err:
+            if err.code() != grpc.StatusCode.INVALID_ARGUMENT:
+                raise
+            _LOGGER.debug("nonce-gated read rejected, retrying with a fresh nonce")
+            return read(timeout)
 
     def _get_nonce(self, timeout: float) -> bytes:
         """Fetch a fresh single-use nonce for a nonce-gated authenticated read."""
