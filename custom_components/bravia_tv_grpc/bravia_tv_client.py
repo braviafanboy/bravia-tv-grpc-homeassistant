@@ -121,6 +121,10 @@ class BraviaTvGrpcClient:
         # nonces and only the latest is valid, so GetNonce + the read that
         # consumes it run under one lock (HA fires app-icon reads in parallel).
         self._nonce_lock = threading.Lock()
+        # Writes go out in call order: HA runs entity services on executor
+        # threads, so two quick writes to one field (a dragged slider) could
+        # otherwise reach the TV reversed and leave the earlier value in place.
+        self._write_lock = threading.Lock()
         self._on_delta: DeltaCallback | None = None
         self._on_connection_lost: Callable[[], None] | None = None
         self._on_reconnect: Callable[[], None] | None = None
@@ -318,8 +322,9 @@ class BraviaTvGrpcClient:
         """
         if self._stub is None or self._session_random is None:
             raise BraviaTvConnectionError("not connected")
-        self._confirm_prerequisites(path, timeout)
-        return self._exec(path, timeout, **self._value_kwargs(path, value))
+        with self._write_lock:
+            self._confirm_prerequisites(path, timeout)
+            return self._exec(path, timeout, **self._value_kwargs(path, value))
 
     def _exec(self, path: str, timeout: float, **value_kwargs: Any) -> bool:
         token = sign_exec_auth_token(
