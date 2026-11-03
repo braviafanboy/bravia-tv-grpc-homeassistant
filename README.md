@@ -177,30 +177,48 @@ gains:
 
 ### Installing the agent
 
-1. **Put the APK on the TV.** Download `bravia-agent.apk` from the agent's
-   [releases](https://github.com/braviafanboy/bravia-tv-agent/releases) and
-   install it with any sideloading method: `adb install bravia-agent.apk`, a
-   downloader app on the TV pointed at the release URL, or a USB stick with
-   the TV's file manager. Android asks you to confirm the install on screen;
-   that step cannot be done for you.
-2. **That is it for the sensors.** Within five minutes the integration finds
-   the agent on the TV's address, launches it once (nothing appears on
-   screen), pairs with it over the Sony cloud, or through a 60-second pairing
-   window when the cloud is unreachable, and the illuminance, temperature,
-   panel, Wi-Fi and settings entities appear. Pairing is remembered on both
-   sides; a reinstalled agent is re-paired automatically.
-3. **Two optional permissions** unlock the rest. Now-playing needs
+The agent is installed once with adb, Android's own developer tool; the TV
+has no built-in way to fetch and install an app, and Android requires the
+install to be confirmed on the TV in any case. Everything after that is
+automatic.
+
+1. **Enable network debugging on the TV** (once). Settings → System → About →
+   *Android TV OS build*: select it seven times to unlock *Developer options*.
+   Then Settings → System → Developer options → turn on *Network debugging*
+   (also called *ADB debugging* / *Wireless debugging* depending on firmware).
+   Note the TV's IP address from Settings → Network & Internet.
+2. **Install from a computer** with the Android platform tools
+   ([download](https://developer.android.com/tools/releases/platform-tools)):
+
+   ```
+   adb connect <tv-ip>
+   adb install bravia-agent.apk
+   ```
+
+   The TV shows an *Allow debugging?* prompt on the first connection; accept
+   it with the remote. `bravia-agent.apk` is the file attached to the agent's
+   [releases](https://github.com/braviafanboy/bravia-tv-agent/releases).
+3. **That is it for the sensors.** Within five minutes the integration finds
+   the agent on the TV's address, starts it (nothing appears on screen), pairs
+   with it over the Sony cloud, or through a 60-second pairing window when the
+   cloud is unreachable, and the illuminance, temperature, panel, Wi-Fi and
+   settings entities appear. Pairing is remembered on both sides; a reinstalled
+   agent is re-paired automatically.
+4. **Two optional permissions** unlock the rest. Now-playing needs
    *Notification access* and the remote's battery needs *Bluetooth*; Android
    only grants these through its own prompts on the TV. Press the **Agent
    setup** button on the TV's device page in Home Assistant, or open the
    BRAVIA agent app from the TV's launcher, and accept the two prompts with
-   the remote. A repair notice reminds you while either is missing.
-   With adb, the same two grants are:
+   the remote. A repair notice reminds you while either is missing. While
+   adb is still connected, the same two grants are:
 
    ```
    adb shell cmd notification allow_listener com.braviafanboy.braviaagent/.MediaListenerService
    adb shell pm grant com.braviafanboy.braviaagent android.permission.BLUETOOTH_CONNECT
    ```
+
+You can turn network debugging off again afterwards; the agent does not use
+it. Updates are a new `adb install -r` of the next release for now.
 
 How it works:
 
