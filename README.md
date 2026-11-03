@@ -204,9 +204,10 @@ automatic.
    cloud is unreachable, and the illuminance, temperature, panel, Wi-Fi and
    settings entities appear. Pairing is remembered on both sides; a reinstalled
    agent is re-paired automatically.
-4. **Two optional permissions** unlock the rest. Now-playing needs
-   *Notification access* and the remote's battery needs *Bluetooth*; Android
-   only grants these through its own prompts on the TV. Press the **Agent
+4. **Three optional permissions** unlock the rest. Now-playing needs
+   *Notification access*, the remote's battery needs *Bluetooth*, and updating
+   the agent from Home Assistant needs *Install unknown apps*; Android only
+   grants these through its own prompts on the TV. Press the **Agent
    setup** button on the TV's device page in Home Assistant, or open the
    BRAVIA agent app from the TV's launcher, and accept the two prompts with
    the remote. A repair notice reminds you while either is missing. While
@@ -218,7 +219,11 @@ automatic.
    ```
 
 You can turn network debugging off again afterwards; the agent does not use
-it. Updates are a new `adb install -r` of the next release for now.
+it. **Updates come through Home Assistant**: an update entity for the agent
+sits next to the TV firmware one, reads the agent's release manifest, and
+installing it downloads the APK on the TV and asks for one confirmation on
+screen. The manifest URL can be changed in the integration's options, for
+example to a file Home Assistant serves itself.
 
 How it works:
 

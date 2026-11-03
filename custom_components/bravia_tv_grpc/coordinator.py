@@ -33,10 +33,12 @@ from .const import (
     AGENT_CLIENT_NAME,
     CONF_AGENT_CERT,
     CONF_AGENT_FINGERPRINT,
+    CONF_AGENT_MANIFEST_URL,
     CONF_AGENT_TOKEN,
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
+    DEFAULT_AGENT_MANIFEST_URL,
     DOMAIN,
 )
 from .grpc import agent as agentmod
@@ -131,6 +133,7 @@ _AGENT_DEEP_LINK = "application.deep_link"
 _AGENT_PAIR_WINDOW = 60
 _AGENT_PAIR_RETRY = timedelta(minutes=10)
 _AGENT_THEMES_INTERVAL = timedelta(hours=1)
+_AGENT_MANIFEST_INTERVAL = timedelta(hours=6)
 _AGENT_BACKOFF_MAX = 60
 # Session keys last 24 h and the TV forgets the session when they lapse;
 # renew this long before expiry, in place, and retry this often on failure.
@@ -192,6 +195,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._agent_last_pair: datetime | None = None
         self._agent_themes_at: datetime | None = None
         self._cancel_key_renewal: Any = None
+        # Latest agent release per the manifest (version/url/sha256/notes).
+        self.agent_latest: dict[str, Any] | None = None
+        self._cancel_agent_manifest: Any = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -344,6 +350,10 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._agent_task = self._entry.async_create_background_task(
             self.hass, self._async_agent_loop(), name="bravia_tv_agent"
         )
+        await self.async_check_agent_update()
+        self._cancel_agent_manifest = async_track_time_interval(
+            self.hass, self.async_check_agent_update, _AGENT_MANIFEST_INTERVAL
+        )
 
     def _schedule_agent_probe(self) -> None:
         """Keep looking for an agent that is not (yet) answering."""
@@ -389,6 +399,56 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except agentmod.AgentError:
             return
         self._update_agent_permission_issue()
+
+    @property
+    def agent_version(self) -> str | None:
+        version = (self.agent_info.get("agent") or {}).get("version")
+        return version if isinstance(version, str) else None
+
+    async def async_check_agent_update(self, _now: Any = None) -> None:
+        """Read the release manifest; never raises."""
+        url = (
+            self._entry.options.get(CONF_AGENT_MANIFEST_URL)
+            or DEFAULT_AGENT_MANIFEST_URL
+        )
+        try:
+            self.agent_latest = await agentmod.async_fetch_manifest(
+                async_get_clientsession(self.hass), url
+            )
+        except agentmod.AgentError as err:
+            _LOGGER.debug("agent release manifest unavailable: %s", err)
+            return
+        self.async_set_updated_data(dict(self._state))
+
+    async def async_agent_install_update(self) -> None:
+        """Stage the manifest's APK on the agent and open its updater on the TV,
+        which downloads, verifies and asks for the on-screen confirmation."""
+        if self.agent is None or not self.agent_latest:
+            raise HomeAssistantError("No agent update available")
+        latest = self.agent_latest
+        try:
+            await self.agent.async_stage_update(
+                str(latest["url"]), latest.get("sha256"), latest.get("version")
+            )
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                f"Could not stage the agent update: {err}"
+            ) from err
+        if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
+            await self.async_cloud_command(
+                _AGENT_DEEP_LINK,
+                [
+                    cloud.post_command(
+                        _AGENT_DEEP_LINK,
+                        {
+                            "package_name": agentmod.AGENT_PACKAGE,
+                            "uri": agentmod.UPDATE_DEEP_LINK,
+                        },
+                    )
+                ],
+            )
+        else:
+            await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
 
     async def async_agent_setup(self) -> None:
         """Open the agent's permission screens on the TV: through the cloud
@@ -1103,6 +1163,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._cancel_agent_manifest is not None:
+            self._cancel_agent_manifest()
+            self._cancel_agent_manifest = None
         if self._cancel_key_renewal is not None:
             self._cancel_key_renewal()
             self._cancel_key_renewal = None

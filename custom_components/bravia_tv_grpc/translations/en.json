@@ -34,7 +34,8 @@
         "title": "Bravia TV options",
         "description": "The gRPC control port is discovered automatically. Set it here only if discovery fails on your network and you know the TV's current port; 0 restores automatic discovery.",
         "data": {
-          "grpc_port": "gRPC port (0 = automatic)"
+          "grpc_port": "gRPC port (0 = automatic)",
+          "agent_manifest_url": "Agent release manifest URL (blank = GitHub releases)"
         }
       }
     }
@@ -204,6 +205,9 @@
     "update": {
       "firmware": {
         "name": "Firmware"
+      },
+      "agent": {
+        "name": "BRAVIA agent"
       }
     },
     "remote": {
@@ -224,7 +228,7 @@
     },
     "agent_permissions": {
       "title": "BRAVIA agent on {name} needs permissions",
-      "description": "The BRAVIA agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access and the remote's battery needs Bluetooth. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the BRAVIA agent app on the TV and follow its status screen."
+      "description": "The BRAVIA agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access, the remote's battery needs Bluetooth, and updating the agent from Home Assistant needs permission to install unknown apps. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the BRAVIA agent app on the TV and follow its status screen."
     }
   },
   "services": {

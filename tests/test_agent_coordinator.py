@@ -55,6 +55,17 @@ def _enable(enable_custom_integrations):
 
 
 @pytest.fixture(autouse=True)
+def _no_manifest_fetch():
+    """The release manifest lives on GitHub; tests never fetch it unless they
+    patch the fetch themselves."""
+    with patch(
+        f"{COORD}.agentmod.async_fetch_manifest",
+        new=AsyncMock(side_effect=agentmod.AgentError("offline")),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _stub_ssl():
     """The fakes never open sockets; keep certificate handling symbolic for
     the whole test, including the background task that pins after pairing."""
@@ -166,6 +177,9 @@ class FakeAgent:
 
     async def async_artwork(self):
         return b"png"
+
+    async def async_stage_update(self, url, sha256, version):
+        self.staged = (url, sha256, version)
 
 
 async def _until(predicate, timeout=5.0):
@@ -400,4 +414,41 @@ async def test_agent_setup_prefers_cloud_deep_link(hass: HomeAssistant):
         await coordinator.async_agent_setup()
     assert sent and sent[0]["args"]["uri"] == agentmod.SETUP_DEEP_LINK
     coordinator.client.exec_command.assert_not_called()
+    await coordinator.async_shutdown()
+
+
+async def test_agent_update_entity_flow(hass: HomeAssistant):
+    """Manifest → latest version; install stages the APK and opens the updater."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    manifest = {
+        "version": "9.9.9",
+        "url": "https://x/bravia-agent.apk",
+        "sha256": "ab" * 32,
+        "notes": "n",
+    }
+    sent: list[dict] = []
+
+    async def fake_cloud(name, commands):
+        sent.append(commands[0])
+        return {}
+
+    with (
+        patch(
+            f"{COORD}.agentmod.async_fetch_manifest",
+            new=AsyncMock(return_value=manifest),
+        ),
+        patch(
+            f"{COORD}.BraviaTvCoordinator.async_cloud_command", side_effect=fake_cloud
+        ),
+    ):
+        coordinator = await _start(
+            hass, entry, fakes, cloud_caps={"application.deep_link": ("post",)}
+        )
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+        assert coordinator.agent_version == "0.1.0"
+        assert coordinator.agent_latest["version"] == "9.9.9"
+        await coordinator.async_agent_install_update()
+    assert fakes[0].staged == ("https://x/bravia-agent.apk", "ab" * 32, "9.9.9")
+    assert sent and sent[0]["args"]["uri"] == agentmod.UPDATE_DEEP_LINK
     await coordinator.async_shutdown()

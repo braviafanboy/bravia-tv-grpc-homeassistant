@@ -67,6 +67,27 @@ def pair_deep_link(token: str, name: str) -> str:
 
 
 SETUP_DEEP_LINK = "braviaagent://setup"
+UPDATE_DEEP_LINK = "braviaagent://update"
+
+
+async def async_fetch_manifest(
+    session: aiohttp.ClientSession, url: str
+) -> dict[str, Any]:
+    """Read a release manifest: ``{"version", "url", "sha256", "notes"}``."""
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                raise AgentError(f"manifest: HTTP {resp.status}")
+            data = await resp.json(content_type=None)
+    except (aiohttp.ClientError, TimeoutError, OSError, ValueError) as err:
+        raise AgentError(f"manifest: {err}") from err
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("version"), str)
+        or not data.get("url")
+    ):
+        raise AgentError("manifest: missing version or url")
+    return data
 
 
 def missing_permissions(info: dict[str, Any]) -> list[str]:
@@ -307,6 +328,32 @@ class AgentClient:
             raise AgentError("pair: no token in reply")
         self.token = token
         return token
+
+    async def async_stage_update(
+        self, url: str, sha256: str | None, version: str | None
+    ) -> None:
+        """``POST /v1/update``: tell the agent which APK to install next."""
+        params = {"url": url}
+        if sha256:
+            params["sha256"] = sha256
+        if version:
+            params["version"] = version
+        try:
+            async with self._session.post(
+                self.url("/v1/update"),
+                params=params,
+                headers=self._headers(),
+                ssl=self._ssl(),
+                timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT),
+            ) as resp:
+                if resp.status == 401:
+                    raise AgentUnauthorized("/v1/update")
+                if resp.status != 200:
+                    raise AgentError(f"update: HTTP {resp.status}")
+        except AgentError:
+            raise
+        except (aiohttp.ClientError, TimeoutError, OSError) as err:
+            raise self._wrap(err, "update") from err
 
     async def async_events(self) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         """Stream ``(event, payload)`` from ``GET /v1/events`` until the link drops.

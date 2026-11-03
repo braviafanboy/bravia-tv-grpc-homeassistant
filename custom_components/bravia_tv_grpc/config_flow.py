@@ -30,6 +30,7 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 import voluptuous as vol
 
 from .const import (
+    CONF_AGENT_MANIFEST_URL,
     CONF_DEVICE_UNIQUE_ID,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
@@ -293,14 +294,23 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
         """Manage the manual-port option."""
         if user_input is not None:
             return self.async_create_entry(
-                data={CONF_GRPC_PORT: user_input.get(CONF_GRPC_PORT) or 0}
+                data={
+                    CONF_GRPC_PORT: user_input.get(CONF_GRPC_PORT) or 0,
+                    CONF_AGENT_MANIFEST_URL: (
+                        user_input.get(CONF_AGENT_MANIFEST_URL) or ""
+                    ).strip(),
+                }
             )
         current = self.config_entry.options.get(CONF_GRPC_PORT, 0)
         schema = vol.Schema(
             {
                 vol.Optional(CONF_GRPC_PORT, default=current): vol.All(
                     vol.Coerce(int), vol.Range(min=0, max=65535)
-                )
+                ),
+                vol.Optional(
+                    CONF_AGENT_MANIFEST_URL,
+                    default=self.config_entry.options.get(CONF_AGENT_MANIFEST_URL, ""),
+                ): str,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

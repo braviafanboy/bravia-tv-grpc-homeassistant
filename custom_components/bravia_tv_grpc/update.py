@@ -14,6 +14,7 @@ import asyncio
 import html
 import logging
 import re
+from typing import Any
 
 from homeassistant.components.update import (
     UpdateDeviceClass,
@@ -27,7 +28,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_SW_VERSION, DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvAgentEntity, BraviaTvEntity
 from .util import parse_json_value
 
 _FW_UPDATE = "fw_update.update_exist"
@@ -62,7 +63,10 @@ async def async_setup_entry(
     """Set up the Bravia TV firmware update entity if advertised."""
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
     if _FW_UPDATE in coordinator.client.capabilities:
-        async_add_entities([BraviaTvFirmwareUpdate(coordinator)])
+        entities: list[UpdateEntity] = [BraviaTvFirmwareUpdate(coordinator)]
+    if coordinator.agent is not None:
+        entities.append(BraviaTvAgentUpdate(coordinator))
+    async_add_entities(entities)
 
 
 class BraviaTvFirmwareUpdate(BraviaTvEntity, UpdateEntity):
@@ -138,3 +142,47 @@ class BraviaTvFirmwareUpdate(BraviaTvEntity, UpdateEntity):
             return None
         text = _html_to_text(body)
         return text[:_RELEASE_NOTES_MAX_CHARS] or None
+
+
+class BraviaTvAgentUpdate(BraviaTvAgentEntity, UpdateEntity):
+    """The BRAVIA agent app on the TV, updated from the release manifest."""
+
+    _attr_translation_key = "agent"
+    _attr_title = "BRAVIA agent"
+    _attr_supported_features = (
+        UpdateEntityFeature.INSTALL | UpdateEntityFeature.RELEASE_NOTES
+    )
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "update")
+
+    @property
+    def available(self) -> bool:
+        return bool(self.state_value("power")) and self.coordinator.agent is not None
+
+    @property
+    def installed_version(self) -> str | None:
+        return self.coordinator.agent_version
+
+    @property
+    def latest_version(self) -> str | None:
+        latest = self.coordinator.agent_latest
+        return str(latest["version"]) if latest else None
+
+    @property
+    def release_url(self) -> str | None:
+        latest = self.coordinator.agent_latest
+        return (
+            str(latest.get("release_url"))
+            if latest and latest.get("release_url")
+            else None
+        )
+
+    async def async_release_notes(self) -> str | None:
+        latest = self.coordinator.agent_latest
+        return str(latest.get("notes") or "") if latest else None
+
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
+        await self.coordinator.async_agent_install_update()

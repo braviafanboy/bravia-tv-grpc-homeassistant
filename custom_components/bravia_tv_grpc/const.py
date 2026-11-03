@@ -37,3 +37,9 @@ AGENT_CLIENT_NAME = "Home Assistant"
 # DYNAMIC port that changes across reboots, so it is discovered at runtime via
 # mDNS or a port scan — see grpc_discovery.py.
 GRPC_SERVICE = "jp.co.sony.hes.ssh.controldevice.v1.ControlDeviceService"
+
+# Where the integration looks for new agent releases: a JSON manifest
+# {"version", "url", "sha256", "notes"} published with each release. Options
+# may point it elsewhere (a private repo, or Home Assistant serving the file).
+CONF_AGENT_MANIFEST_URL = "agent_manifest_url"
+DEFAULT_AGENT_MANIFEST_URL = "https://github.com/braviafanboy/bravia-tv-agent/releases/latest/download/agent.json"

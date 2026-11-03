@@ -233,6 +233,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     new_manual = entry.options.get(CONF_GRPC_PORT) or None
     if coordinator is None or new_manual != coordinator.applied_manual_port:
         await hass.config_entries.async_reload(entry.entry_id)
+        return
+    # Other options (the agent release manifest URL) take effect in place.
+    if coordinator.agent is not None:
+        await coordinator.async_check_agent_update()
 
 
 async def _connect(
