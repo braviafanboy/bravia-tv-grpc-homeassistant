@@ -358,9 +358,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await client.async_state()
                 token = candidate
             except (HomeAssistantError, agentmod.AgentError) as err:
-                _LOGGER.debug("agent pairing via cloud deep link failed: %s", err)
+                _LOGGER.warning(
+                    "BRAVIA agent pairing via the cloud deep link failed (%s); "
+                    "falling back to launching the agent on the TV",
+                    err,
+                )
                 client.token = None
         if token is None:
+            if not self.cloud_supports(_AGENT_DEEP_LINK, "post"):
+                _LOGGER.info(
+                    "BRAVIA agent pairing: cloud deep link not available, "
+                    "launching the agent on the TV for its pairing window"
+                )
             try:
                 await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
             except HomeAssistantError as err:

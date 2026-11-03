@@ -110,7 +110,12 @@ class AgentClient:
         return f"{self.base_url}{path}"
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        # identity: a gzipped event stream would be buffered by the agent's
+        # deflater and arrive in bursts instead of per event.
+        headers = {"Accept-Encoding": "identity"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
 
     async def _get_json(self, path: str, timeout: float) -> dict[str, Any]:
         try:
