@@ -14,7 +14,7 @@ from .const import (
     CONF_SW_VERSION,
     DOMAIN,
 )
-from .coordinator import BraviaTvCoordinator, cloud_path
+from .coordinator import BraviaTvCoordinator, agent_path, cloud_path
 from .grpc import cloud_commands as cloud
 
 
@@ -109,3 +109,32 @@ class BraviaTvCloudEntity(BraviaTvEntity):
             self._cloud_name, [cloud.set_command(self._cloud_name, value)]
         )
         self.coordinator.set_cloud_value(self._cloud_name, value)
+
+
+class BraviaTvAgentEntity(BraviaTvEntity):
+    """Base for entities fed by the BRAVIA TV agent (the companion app).
+
+    State lives under ``agent.<block>`` in the coordinator data and arrives
+    over the agent's event stream. The agent is only reachable while the TV
+    is on, so the entity is unavailable in standby and whenever the stream is
+    down (``agent.online`` false).
+    """
+
+    def __init__(self, coordinator: BraviaTvCoordinator, block: str, key: str) -> None:
+        super().__init__(coordinator, agent_path(block))
+        self._block = block
+        entry = coordinator.config_entry
+        root = entry.unique_id or entry.entry_id
+        self._attr_unique_id = f"{root}_agent_{key}"
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.agent_online
+            and bool(self.state_value("power"))
+        )
+
+    def agent_value(self, *keys: str) -> Any:
+        """A value from this entity's agent block (nested by ``keys``)."""
+        return self.coordinator.agent_value(self._block, *keys)

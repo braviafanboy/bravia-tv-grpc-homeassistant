@@ -31,7 +31,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 import voluptuous as vol
 
 from .const import DOMAIN
-from .coordinator import BraviaTvCoordinator, _icon_uri, cloud_path
+from .coordinator import BraviaTvCoordinator, _icon_uri, agent_path, cloud_path
 from .entity import BraviaTvEntity
 from .grpc import cloud_commands as cloud
 from .grpc.resources import image_content_type
@@ -78,6 +78,16 @@ _LIVING_DECOR = "com.sony.dtv.livingfit"
 # Cloud-only on-screen search (Sony's voice-search results page); surfaced as
 # the ``search`` entity service. Takes over the screen and audio focus.
 _SEARCH = "search"
+# Apps whose media sessions are audio-only, for the media_content_type hint.
+_MUSIC_APPS = {
+    "com.spotify.tv.android",
+    "com.google.android.youtube.tvmusic",
+    "com.aspiro.tidal",
+    "com.apple.android.music",
+    "com.amazon.music.tv",
+    "deezer.android.tv",
+    "com.sony.dtv.osat.music.toast",
+}
 _SEARCH_DISPLAY = "ACTION_SEARCH_AND_DISPLAY_RESULTS"
 _SEARCH_PLAY = "ACTION_SEARCH_AND_PLAY"
 _MEDIA_TYPE_THEME = "theme"
@@ -171,7 +181,69 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         power = self._state.get(_POWER)
         if power is None:
             return None
-        return MediaPlayerState.ON if power else MediaPlayerState.OFF
+        if not power:
+            return MediaPlayerState.OFF
+        # With the agent, the foreground app's media session gives the real
+        # transport state; without it the TV is simply "on".
+        media = self._agent_media
+        if media and media.get("active"):
+            return {
+                "playing": MediaPlayerState.PLAYING,
+                "paused": MediaPlayerState.PAUSED,
+                "buffering": MediaPlayerState.BUFFERING,
+            }.get(str(media.get("state")), MediaPlayerState.ON)
+        return MediaPlayerState.ON
+
+    # -- now playing (BRAVIA TV agent) --------------------------------------
+    @property
+    def _agent_media(self) -> dict | None:
+        """The agent's media block while the TV is on and the agent is online."""
+        if self._state.get(_POWER) is False or not self.coordinator.agent_online:
+            return None
+        media = self._state.get(agent_path("media"))
+        return media if isinstance(media, dict) else None
+
+    @property
+    def app_name(self) -> str | None:
+        media = self._agent_media
+        if media and media.get("active") and isinstance(media.get("app"), str):
+            return self.coordinator.app_label(media["app"]) or media["app"]
+        return None
+
+    @property
+    def media_title(self) -> str | None:
+        media = self._agent_media
+        return media.get("title") if media and media.get("active") else None
+
+    @property
+    def media_artist(self) -> str | None:
+        media = self._agent_media
+        return media.get("artist") if media and media.get("active") else None
+
+    @property
+    def media_album_name(self) -> str | None:
+        media = self._agent_media
+        return media.get("album") if media and media.get("active") else None
+
+    @property
+    def media_duration(self) -> int | None:
+        media = self._agent_media
+        value = media.get("duration_s") if media and media.get("active") else None
+        return int(value) if isinstance(value, int | float) else None
+
+    @property
+    def media_content_type(self) -> MediaType | str | None:
+        media = self._agent_media
+        if not media or not media.get("active"):
+            return None
+        return MediaType.MUSIC if media.get("app") in _MUSIC_APPS else MediaType.VIDEO
+
+    @property
+    def media_position_updated_at(self):
+        media = self._agent_media
+        if media and media.get("active") and media.get("position_s") is not None:
+            return self._state.get(agent_path("updated_at"))
+        return None
 
     @property
     def volume_level(self) -> float | None:
@@ -214,13 +286,19 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
 
     @property
     def media_image_url(self) -> str | None:
-        """The foreground app's icon URI, driving the card artwork.
+        """Artwork for the card: the agent's now-playing art when a session is
+        active, else the foreground app's icon URI.
 
-        Returned only when the foreground app has an icon (external inputs and
-        the built-in tuner have none). HA fetches the actual bytes server-side
-        via ``async_get_media_image``; this URI just supplies a stable hash that
-        changes when the foreground app does, so the artwork refreshes.
+        Returned only when something has an image (external inputs and the
+        built-in tuner have none). HA fetches the actual bytes server-side via
+        ``async_get_media_image``; this URL just supplies a stable hash that
+        changes with the artwork, so the card refreshes.
         """
+        media = self._agent_media
+        agent = self.coordinator.agent
+        if media and media.get("active") and media.get("artwork_url") and agent:
+            tag = f"{media.get('app')}|{media.get('title')}"
+            return f"{agent.url(str(media['artwork_url']))}#{hash(tag) & 0xFFFFFFFF:x}"
         return self.coordinator.app_icon_uri(self._current_app_package)
 
     @property
@@ -229,7 +307,12 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         return False
 
     async def async_get_media_image(self) -> tuple[bytes | None, str | None]:
-        """Serve the foreground app's icon bytes as the current-media artwork."""
+        """Serve the now-playing artwork (agent) or the foreground app's icon."""
+        media = self._agent_media
+        if media and media.get("active") and media.get("artwork_url"):
+            art = await self.coordinator.async_get_agent_artwork()
+            if art:
+                return art, "image/png"
         data = await self.coordinator.async_get_app_icon(self._current_app_package)
         if not data:
             return None, None
@@ -421,7 +504,15 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
 
     @property
     def media_position(self) -> int | None:
-        """Position (s) the TV last reported after a seek; None otherwise."""
+        """Position (s): the agent's live session position when available,
+        else what the TV last reported after a seek; None otherwise."""
+        media = self._agent_media
+        if (
+            media
+            and media.get("active")
+            and isinstance(media.get("position_s"), int | float)
+        ):
+            return int(media["position_s"])
         value = self._state.get(cloud_path(_SEEK))
         return int(value) // 1000 if isinstance(value, int | float) else None
 

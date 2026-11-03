@@ -2,6 +2,7 @@
 # Home Assistant tests use pytest-asyncio in auto mode (the `hass` fixture is
 # async). Harmless for the pure-decoder tests, which are synchronous.
 asyncio_mode = "auto"
+markers = ["agent_probe: let the coordinator probe for the BRAVIA agent"]
 # Put the repo root on sys.path so the HA tests can `import custom_components…`
 # regardless of how pytest is launched (the `pytest` console script does not add
 # the CWD, unlike `python -m pytest`).

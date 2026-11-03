@@ -23,3 +23,26 @@ if "btvgrpc" not in sys.modules:
     _pkg = types.ModuleType("btvgrpc")
     _pkg.__path__ = [str(_GRPC)]
     sys.modules["btvgrpc"] = _pkg
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_agent_probe(request):
+    """Keep the HA-harness tests hermetic: the coordinator probes the TV's host
+    for the BRAVIA agent at start, which would hit the resolver. Tests that
+    exercise the agent opt back in with the ``agent_probe`` marker."""
+    if request.node.get_closest_marker("agent_probe") is not None:
+        yield
+        return
+    try:
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "custom_components.bravia_tv_grpc.coordinator.BraviaTvCoordinator.async_start_agent",
+            new=AsyncMock(return_value=None),
+        ):
+            yield
+    except ImportError:
+        yield

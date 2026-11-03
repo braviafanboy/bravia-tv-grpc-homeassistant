@@ -154,6 +154,45 @@ installed, and release notes depend on Sony's page for a pending update. On
 other models, `tools/cloud_command_probe.py caps` shows what the TV
 advertises and `send <name> set <value>` exercises one capability.
 
+## BRAVIA TV agent (optional companion app)
+
+Some things the TV never exposes over gRPC, the cloud or REST: the ambient
+light sensor, the ambient temperature, what is actually playing, the
+remote's battery, and whether the panel is lit. The optional
+[BRAVIA TV agent](https://github.com/braviafanboy/bravia-tv-agent) is a small
+sideloaded Android TV app that reads those on the TV and serves them to this
+integration over the LAN. Nothing changes without it; with it, the TV device
+gains:
+
+| Entity | Source on the TV | Notes |
+|---|---|---|
+| `sensor` Illuminance (lx) | Android light sensor | The same reading the TV's own Auto luminance level uses |
+| `sensor` Ambient temperature (°C) | Android ambient temperature sensor | |
+| `sensor` Remote battery (%) | The remote's Bluetooth battery service | Diagnostic |
+| `binary_sensor` Remote connected | Bluetooth connection state | Diagnostic |
+| `binary_sensor` Panel | Display state | Off during *Picture Off* while the TV stays on |
+| `media_player` now playing | The foreground app's media session | Title, artist, album, position, duration, artwork and playing / paused state |
+| `select` Living Decor theme | The Living Decor app's theme list | Disabled by default; needs the cloud `select_media` capability |
+| `sensor` Wi-Fi signal / link speed | WifiManager | Diagnostic, disabled by default |
+
+How it works:
+
+1. Install the agent on the TV (sideload the APK), open it once and grant
+   *Notification access* (for now-playing) and *Bluetooth* (for the remote's
+   battery) when it asks.
+2. The integration probes the TV's address on port 8585 at startup. If the
+   agent answers, it pairs automatically: it delivers a token through the
+   Sony cloud deep link when the cloud is reachable, otherwise it launches
+   the agent on the TV, which opens a 60-second pairing window, and pairs
+   through it. The token is stored in the config entry; the agent accepts
+   nothing else afterwards.
+3. State arrives over the agent's event stream and is unavailable whenever
+   the TV is off, since the TV leaves the LAN in standby.
+
+Diagnostics include the agent's version and granted permissions. If you
+reinstall the agent or clear its pairing (hold LEFT on its status screen), the
+integration re-pairs on its own the next time the TV is on.
+
 ## Soundbar control is out of scope
 
 Control of a connected Sony soundbar — e.g. the **BRAVIA Theatre Quad**

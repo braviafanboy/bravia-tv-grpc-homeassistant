@@ -121,6 +121,9 @@
       },
       "speaker_type": {
         "name": "Speaker Type"
+      },
+      "living_decor_theme": {
+        "name": "Living Decor theme"
       }
     },
     "sensor": {
@@ -150,6 +153,21 @@
       },
       "bluetooth_device": {
         "name": "Bluetooth Device"
+      },
+      "illuminance": {
+        "name": "Illuminance"
+      },
+      "ambient_temperature": {
+        "name": "Ambient temperature"
+      },
+      "remote_battery": {
+        "name": "Remote battery"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "wifi_link_speed": {
+        "name": "Wi-Fi link speed"
       }
     },
     "binary_sensor": {
@@ -167,6 +185,12 @@
       },
       "hdmi_device": {
         "name": "HDMI Linked Device"
+      },
+      "panel": {
+        "name": "Panel"
+      },
+      "remote_connected": {
+        "name": "Remote connected"
       }
     },
     "text": {

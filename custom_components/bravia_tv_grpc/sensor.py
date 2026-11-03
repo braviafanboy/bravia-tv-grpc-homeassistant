@@ -9,15 +9,26 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import (
+    LIGHT_LUX,
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfDataRate,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvAgentEntity, BraviaTvEntity
 from .util import parse_json_value, source_label
 
 _SIGNAL_VIDEO = "playback_control.signal_info.video"
@@ -166,6 +177,11 @@ async def async_setup_entry(
         entities.append(BraviaTvRestrictedControlsSensor(coordinator))
     if _BT_DEVICE in caps:
         entities.append(BraviaTvBluetoothDeviceSensor(coordinator))
+    if coordinator.agent is not None:
+        entities.extend(
+            BraviaTvAgentSensor(coordinator, key, spec)
+            for key, spec in _AGENT_SENSORS.items()
+        )
     async_add_entities(entities)
 
 
@@ -443,3 +459,74 @@ class BraviaTvBluetoothDeviceSensor(BraviaTvEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {k: v for k, v in self._info().items() if k != "name"}
+
+
+# Agent-fed sensors: key -> (block, nested keys, device class, unit, state class,
+# entity category, enabled by default).
+_AGENT_SENSORS: dict[str, tuple] = {
+    "illuminance": (
+        "environment",
+        ("illuminance_lx",),
+        SensorDeviceClass.ILLUMINANCE,
+        LIGHT_LUX,
+        SensorStateClass.MEASUREMENT,
+        None,
+        True,
+    ),
+    "ambient_temperature": (
+        "environment",
+        ("temperature_c",),
+        SensorDeviceClass.TEMPERATURE,
+        UnitOfTemperature.CELSIUS,
+        SensorStateClass.MEASUREMENT,
+        None,
+        True,
+    ),
+    "remote_battery": (
+        "bluetooth",
+        ("remote", "battery_pct"),
+        SensorDeviceClass.BATTERY,
+        PERCENTAGE,
+        SensorStateClass.MEASUREMENT,
+        EntityCategory.DIAGNOSTIC,
+        True,
+    ),
+    "wifi_signal": (
+        "wifi",
+        ("rssi_dbm",),
+        SensorDeviceClass.SIGNAL_STRENGTH,
+        SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        SensorStateClass.MEASUREMENT,
+        EntityCategory.DIAGNOSTIC,
+        False,
+    ),
+    "wifi_link_speed": (
+        "wifi",
+        ("link_mbps",),
+        SensorDeviceClass.DATA_RATE,
+        UnitOfDataRate.MEGABITS_PER_SECOND,
+        SensorStateClass.MEASUREMENT,
+        EntityCategory.DIAGNOSTIC,
+        False,
+    ),
+}
+
+
+class BraviaTvAgentSensor(BraviaTvAgentEntity, SensorEntity):
+    """A numeric reading reported by the BRAVIA TV agent."""
+
+    def __init__(self, coordinator: BraviaTvCoordinator, key: str, spec: tuple) -> None:
+        block, keys, device_class, unit, state_class, category, enabled = spec
+        super().__init__(coordinator, block, key)
+        self._keys = keys
+        self._attr_translation_key = key
+        self._attr_device_class = device_class
+        self._attr_native_unit_of_measurement = unit
+        self._attr_state_class = state_class
+        self._attr_entity_category = category
+        self._attr_entity_registry_enabled_default = enabled
+
+    @property
+    def native_value(self) -> float | int | None:
+        value = self.agent_value(*self._keys)
+        return value if isinstance(value, int | float) else None

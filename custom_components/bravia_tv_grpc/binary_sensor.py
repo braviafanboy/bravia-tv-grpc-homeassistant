@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvAgentEntity, BraviaTvEntity
 from .util import parse_json_value
 
 # Firmware update is exposed via the update platform (update.py), not here.
@@ -64,6 +64,11 @@ async def async_setup_entry(
         entities.append(BraviaTvErrorSensor(coordinator))
     if _HDMI_DEVICE in caps:
         entities.append(BraviaTvHdmiDeviceSensor(coordinator))
+    if coordinator.agent is not None:
+        entities.extend(
+            BraviaTvAgentBoolSensor(coordinator, key, spec)
+            for key, spec in _AGENT_BOOL_SENSORS.items()
+        )
     async_add_entities(entities)
 
 
@@ -181,3 +186,33 @@ class BraviaTvHdmiDeviceSensor(BraviaTvEntity, BinarySensorEntity):
             if info.get("version") is not None:
                 attrs["version"] = info["version"]
         return attrs
+
+
+# Agent-fed booleans: key -> (block, nested keys, device class, entity category).
+_AGENT_BOOL_SENSORS: dict[str, tuple] = {
+    # The panel itself: false during Picture Off while the TV stays on.
+    "panel": ("display", ("on",), None, None),
+    "remote_connected": (
+        "bluetooth",
+        ("remote", "connected"),
+        BinarySensorDeviceClass.CONNECTIVITY,
+        EntityCategory.DIAGNOSTIC,
+    ),
+}
+
+
+class BraviaTvAgentBoolSensor(BraviaTvAgentEntity, BinarySensorEntity):
+    """A boolean reported by the BRAVIA TV agent."""
+
+    def __init__(self, coordinator: BraviaTvCoordinator, key: str, spec: tuple) -> None:
+        block, keys, device_class, category = spec
+        super().__init__(coordinator, block, key)
+        self._keys = keys
+        self._attr_translation_key = key
+        self._attr_device_class = device_class
+        self._attr_entity_category = category
+
+    @property
+    def is_on(self) -> bool | None:
+        value = self.agent_value(*self._keys)
+        return value if isinstance(value, bool) else None

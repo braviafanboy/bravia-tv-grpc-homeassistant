@@ -31,6 +31,8 @@ TO_REDACT = {
     "serial_number",
     "system_setting.serial_number",
     "unique_id",
+    "device_unique_id",
+    "agent_token",
     # Paired wireless-speaker identifiers (surfaced as sensor attributes).
     *(
         f"speaker_connection_setting.{field}.{pos}"
@@ -62,6 +64,12 @@ def _diagnostics(
         "cloud_capabilities": {
             name: list(commands)
             for name, commands in sorted(coordinator.cloud_capabilities.items())
+        },
+        "agent": {
+            "present": coordinator.agent is not None,
+            "online": coordinator.agent_online,
+            "info": async_redact_data(dict(coordinator.agent_info), TO_REDACT),
+            "themes": [t.get("id") for t in coordinator.agent_themes],
         },
         "state": async_redact_data(dict(coordinator.data or {}), TO_REDACT),
         "app_list": [

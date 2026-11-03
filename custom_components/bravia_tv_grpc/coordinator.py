@@ -14,7 +14,7 @@ the event loop thread-safely.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 import time
 from typing import Any
@@ -25,9 +25,18 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .bravia_tv_client import BraviaTvGrpcClient
-from .const import CONF_FW_PENDING, CONF_GRPC_DEVICE_ID, CONF_GRPC_KEYS, DOMAIN
+from .const import (
+    AGENT_CLIENT_NAME,
+    CONF_AGENT_TOKEN,
+    CONF_FW_PENDING,
+    CONF_GRPC_DEVICE_ID,
+    CONF_GRPC_KEYS,
+    DOMAIN,
+)
+from .grpc import agent as agentmod
 from .grpc import cloud_commands as cloud
 from .grpc import credentials as cred
 from .grpc.application_list import APPLICATION_LIST_PATH
@@ -111,6 +120,22 @@ def _icon_uri(app: dict) -> str | None:
     return uri if isinstance(uri, str) and uri else None
 
 
+# Agent (companion app on the TV) state lives under ``agent.<block>``; the
+# ``agent.online`` flag gates the agent-backed entities.
+AGENT_ONLINE = "agent.online"
+_AGENT_APP_PATH = "system_setting.application"
+_AGENT_DEEP_LINK = "application.deep_link"
+_AGENT_PAIR_WINDOW = 60
+_AGENT_PAIR_RETRY = timedelta(minutes=10)
+_AGENT_THEMES_INTERVAL = timedelta(hours=1)
+_AGENT_BACKOFF_MAX = 60
+
+
+def agent_path(block: str) -> str:
+    """Coordinator data key of an agent state block."""
+    return f"agent.{block}"
+
+
 class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Push-driven coordinator; data is a ``{grpc_path: value}`` dict."""
 
@@ -145,6 +170,16 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cloud_token_expires_at = 0.0
         self._cloud_lock = asyncio.Lock()
         self._cancel_cloud_poll: Any = None
+        # BRAVIA TV agent (companion app): client once discovered on the TV's
+        # host, its /v1/info document, the Living Decor theme list it serves,
+        # the background task that keeps its event stream open, and the last
+        # pairing attempt (rate limit for re-pairing after a 401).
+        self.agent: agentmod.AgentClient | None = None
+        self.agent_info: dict[str, Any] = {}
+        self.agent_themes: list[dict[str, Any]] = []
+        self._agent_task: asyncio.Task | None = None
+        self._agent_last_pair: datetime | None = None
+        self._agent_themes_at: datetime | None = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -174,6 +209,193 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self._async_cloud_poll, _CLOUD_POLL_INTERVAL
             )
         await self._async_refresh_app_list()
+        await self.async_start_agent()
+
+    # -- BRAVIA TV agent (companion app) ---------------------------------
+    @property
+    def agent_online(self) -> bool:
+        return bool(self._state.get(AGENT_ONLINE))
+
+    def agent_value(self, block: str, *keys: str) -> Any:
+        """A value from an agent block, following ``keys`` into nested dicts."""
+        value: Any = self._state.get(agent_path(block))
+        for key in keys:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        return value
+
+    async def async_start_agent(self) -> None:
+        """Discover the agent on the TV's host and start following it.
+
+        Best effort and never raises: without an agent the integration is
+        unchanged. With one, the entry's stored token is tried first; if there
+        is none or it is rejected, pairing runs (cloud deep link, else local
+        app launch + pairing window) as soon as the TV is on.
+        """
+        host = self._entry.data.get("host")
+        if not host or self._agent_task is not None:
+            return
+        client = agentmod.AgentClient(
+            async_get_clientsession(self.hass),
+            host,
+            token=self._entry.data.get(CONF_AGENT_TOKEN),
+        )
+        try:
+            self.agent_info = await client.async_info()
+        except Exception as err:  # noqa: BLE001 - absence must never break setup
+            _LOGGER.debug("no BRAVIA agent on %s: %s", host, err)
+            return
+        self.agent = client
+        info = self.agent_info.get("agent") or {}
+        _LOGGER.info(
+            "BRAVIA agent %s found on %s (contract %s)",
+            info.get("version"),
+            host,
+            info.get("contract"),
+        )
+        self._agent_task = self._entry.async_create_background_task(
+            self.hass, self._async_agent_loop(), name="bravia_tv_agent"
+        )
+
+    def _set_agent_online(self, online: bool) -> None:
+        if self._state.get(AGENT_ONLINE) == online:
+            return
+        self._state[AGENT_ONLINE] = online
+        if not online:
+            self._state[agent_path("media")] = None
+        self.async_set_updated_data(dict(self._state))
+
+    @callback
+    def _apply_agent_document(self, document: dict[str, Any]) -> None:
+        """Store an agent state document (full or SSE ``state`` event)."""
+        for block, value in agentmod.state_blocks(document).items():
+            self._state[agent_path(block)] = value
+        self._state[agent_path("updated_at")] = dt_util.utcnow()
+        self._state[AGENT_ONLINE] = True
+        self.async_set_updated_data(dict(self._state))
+
+    async def _async_agent_loop(self) -> None:
+        """Keep the agent's event stream open; poll, pair and back off as needed."""
+        assert self.agent is not None
+        client = self.agent
+        backoff = 5
+        while True:
+            if self._state.get("power") is False:
+                # The TV drops off the LAN in standby; nothing to read.
+                self._set_agent_online(False)
+                await asyncio.sleep(15)
+                continue
+            try:
+                if not client.token and not await self._async_agent_pair():
+                    await asyncio.sleep(60)
+                    continue
+                self._apply_agent_document(await client.async_state())
+                backoff = 5
+                await self._async_agent_refresh_themes()
+                async for event, payload in client.async_events():
+                    if event == "state":
+                        self._apply_agent_document(payload)
+            except agentmod.AgentUnauthorized:
+                _LOGGER.info("BRAVIA agent rejected the stored token; re-pairing")
+                self._set_agent_online(False)
+                client.token = None
+                await asyncio.sleep(5)
+            except agentmod.AgentError as err:
+                _LOGGER.debug("BRAVIA agent link lost: %s", err)
+                self._set_agent_online(False)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _AGENT_BACKOFF_MAX)
+
+    async def _async_agent_refresh_themes(self) -> None:
+        now = dt_util.utcnow()
+        if (
+            self._agent_themes_at
+            and now - self._agent_themes_at < _AGENT_THEMES_INTERVAL
+        ):
+            return
+        assert self.agent is not None
+        try:
+            self.agent_themes = await self.agent.async_themes()
+        except agentmod.AgentError:
+            return
+        self._agent_themes_at = now
+
+    async def _async_agent_pair(self) -> bool:
+        """Obtain a bearer token from the agent and persist it.
+
+        Prefers the Sony cloud deep link (delivers our token straight to the
+        agent, no window). Falls back to launching the agent through the local
+        gRPC app launch, which opens its 60 s pairing window, and POSTing
+        /v1/pair until it answers. Rate-limited so a broken agent cannot keep
+        launching itself on the TV.
+        """
+        assert self.agent is not None
+        client = self.agent
+        now = dt_util.utcnow()
+        if self._agent_last_pair and now - self._agent_last_pair < _AGENT_PAIR_RETRY:
+            return False
+        self._agent_last_pair = now
+        token: str | None = None
+        if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
+            candidate = agentmod.new_token()
+            try:
+                await self.async_cloud_command(
+                    _AGENT_DEEP_LINK,
+                    [
+                        cloud.post_command(
+                            _AGENT_DEEP_LINK,
+                            {
+                                "package_name": agentmod.AGENT_PACKAGE,
+                                "uri": agentmod.pair_deep_link(
+                                    candidate, AGENT_CLIENT_NAME
+                                ),
+                            },
+                        )
+                    ],
+                )
+                client.token = candidate
+                await client.async_state()
+                token = candidate
+            except (HomeAssistantError, agentmod.AgentError) as err:
+                _LOGGER.debug("agent pairing via cloud deep link failed: %s", err)
+                client.token = None
+        if token is None:
+            try:
+                await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
+            except HomeAssistantError as err:
+                _LOGGER.warning(
+                    "could not launch the BRAVIA agent for pairing: %s", err
+                )
+                return False
+            deadline = self.hass.loop.time() + _AGENT_PAIR_WINDOW
+            while self.hass.loop.time() < deadline:
+                await asyncio.sleep(2)
+                try:
+                    token = await client.async_pair(AGENT_CLIENT_NAME)
+                    break
+                except agentmod.AgentPairingClosed:
+                    continue
+                except agentmod.AgentError as err:
+                    _LOGGER.debug("agent pair attempt failed: %s", err)
+            if token is None:
+                _LOGGER.warning("BRAVIA agent pairing window closed without a token")
+                client.token = None
+                return False
+        self.hass.config_entries.async_update_entry(
+            self._entry, data={**self._entry.data, CONF_AGENT_TOKEN: token}
+        )
+        _LOGGER.info("paired with the BRAVIA agent")
+        return True
+
+    async def async_get_agent_artwork(self) -> bytes | None:
+        """Now-playing artwork from the agent, or None."""
+        if self.agent is None or not self.agent_online:
+            return None
+        try:
+            return await self.agent.async_artwork()
+        except agentmod.AgentError:
+            return None
 
     async def _async_refresh_app_list(self) -> None:
         """Fetch + cache the installed-app list (best-effort).
@@ -651,6 +873,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._agent_task is not None:
+            self._agent_task.cancel()
+            self._agent_task = None
         if self._cancel_refresh is not None:
             self._cancel_refresh()
             self._cancel_refresh = None
