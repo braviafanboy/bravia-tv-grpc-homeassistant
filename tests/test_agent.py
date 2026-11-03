@@ -53,3 +53,61 @@ def test_state_blocks_fills_missing_with_none():
     assert blocks["media"] is None
     assert "junk" not in blocks
     assert set(blocks) == set(agent.BLOCKS)
+
+
+async def test_async_events_assembles_line_delivered_frames():
+    """aiohttp yields the body line by line; events must be assembled across lines."""
+
+    lines = [
+        b"event: state\n",
+        b'data: {"environment": {"illuminance_lx": 5}}\n',
+        b"\n",
+        b"event: heartbeat\n",
+        b"data: {}\n",
+        b"\n",
+        b"event: state\n",
+        b'data: {"environment": {"illuminance_lx": 6}}\n',
+        b"\n",
+    ]
+
+    class Content:
+        def __init__(self):
+            self._it = iter(lines)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._it)
+            except StopIteration:
+                raise StopAsyncIteration from None
+
+    class Resp:
+        status = 200
+
+        def __init__(self):
+            self.content = Content()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Session:
+        def get(self, *a, **k):
+            return Resp()
+
+    client = agent.AgentClient(Session(), "tv", token="t")
+
+    async def collect():
+        out = []
+        try:
+            async for ev, payload in client.async_events():
+                out.append((ev, payload["environment"]["illuminance_lx"]))
+        except agent.AgentError as err:
+            assert "stream ended" in str(err)
+        return out
+
+    assert await collect() == [("state", 5), ("state", 6)]

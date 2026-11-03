@@ -214,14 +214,17 @@ class AgentClient:
                     raise AgentUnauthorized("/v1/events")
                 if resp.status != 200:
                     raise AgentError(f"events: HTTP {resp.status}")
+                # Iterating the body yields one line at a time; an SSE event
+                # spans several lines and ends with a blank one, so collect
+                # lines until then and parse the whole event.
                 pending: list[str] = []
-                async for chunk in resp.content:
-                    pending.append(chunk.decode("utf-8", "replace"))
-                    text = "".join(pending)
-                    if not text.endswith("\n"):
+                async for raw in resp.content:
+                    line = raw.decode("utf-8", "replace")
+                    pending.append(line)
+                    if line.strip():
                         continue
-                    pending = []
-                    for event, data in parse_sse(text.splitlines(keepends=True)):
+                    frame, pending = pending, []
+                    for event, data in parse_sse(frame):
                         if event == "heartbeat":
                             continue
                         try:
