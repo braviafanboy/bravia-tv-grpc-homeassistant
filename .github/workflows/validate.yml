@@ -9,6 +9,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  authors:
+    name: Commit authors use a GitHub no-reply address
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check every commit in the push
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}..HEAD"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            RANGE="HEAD~20..HEAD"
+          fi
+          bad=$(git log --format='%h %ae %ce' "$RANGE" 2>/dev/null | awk '$2 !~ /@users\.noreply\.github\.com$/ || $3 !~ /@users\.noreply\.github\.com$/' || true)
+          if [ -n "$bad" ]; then
+            echo "Commits with a personal identity (use the project no-reply address):"; echo "$bad"; exit 1
+          fi
+          echo "ok"
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest
