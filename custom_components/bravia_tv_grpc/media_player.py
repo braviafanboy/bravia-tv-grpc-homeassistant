@@ -297,8 +297,9 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         media = self._agent_media
         agent = self.coordinator.agent
         if media and media.get("active") and media.get("artwork_url") and agent:
-            tag = f"{media.get('app')}|{media.get('title')}"
-            return f"{agent.url(str(media['artwork_url']))}#{hash(tag) & 0xFFFFFFFF:x}"
+            # The agent's artwork_url carries a revision (?v=n) that changes
+            # with every new image, so the URL itself is the cache key.
+            return agent.url(str(media["artwork_url"]))
         return self.coordinator.app_icon_uri(self._current_app_package)
 
     @property
