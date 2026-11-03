@@ -72,3 +72,58 @@ def test_concurrent_writes_never_overlap(monkeypatch):
         th.join()
     assert probe.peak == 1
     assert len(probe.order) == 6
+
+
+class _RejectOnce:
+    """First call: the TV rejects the session; afterwards it answers."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, req: bytes, timeout: float = 0) -> bytes:
+        self.calls += 1
+        if self.calls == 1:
+            import grpc
+
+            err = grpc.RpcError()
+            err.code = lambda: grpc.StatusCode.INVALID_ARGUMENT  # type: ignore[attr-defined]
+            raise err
+        return b"\x08\x01"
+
+
+def test_write_reauthenticates_and_retries_once(monkeypatch):
+    probe = _RejectOnce()
+    client = _client(monkeypatch, probe)
+    reauths: list[int] = []
+    monkeypatch.setattr(client, "_authenticate", lambda timeout=5.0: reauths.append(1))
+    assert client.exec_command("volume", 3) is True
+    assert probe.calls == 2
+    assert reauths == [1]
+
+
+def test_write_gives_up_after_second_rejection(monkeypatch):
+    import grpc
+    import pytest
+
+    class AlwaysReject:
+        def __call__(self, req: bytes, timeout: float = 0) -> bytes:
+            err = grpc.RpcError()
+            err.code = lambda: grpc.StatusCode.INVALID_ARGUMENT  # type: ignore[attr-defined]
+            raise err
+
+    client = _client(monkeypatch, AlwaysReject())
+    monkeypatch.setattr(client, "_authenticate", lambda timeout=5.0: None)
+    with pytest.raises(grpc.RpcError):
+        client.exec_command("volume", 3)
+
+
+def test_rekey_switches_keys_and_rehandshakes(monkeypatch):
+    client = _client(monkeypatch, _Overlap())
+    calls: list[str] = []
+    monkeypatch.setattr(
+        client, "_authenticate", lambda timeout=5.0: calls.append("auth")
+    )
+    client.rekey("cd" * 32, "newkey", "ef" * 32)
+    assert client._session_id == "newkey"
+    assert client._hmac_key == "cd" * 32
+    assert calls == ["auth"]

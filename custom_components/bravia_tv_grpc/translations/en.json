@@ -48,6 +48,9 @@
     },
     "cloud_unreachable": {
       "message": "Could not send {name} through the Sony cloud: {reason}."
+    },
+    "cloud_invalid_value": {
+      "message": "{name}: {value} is not one of the values the TV advertises ({allowed})"
     }
   },
   "entity": {

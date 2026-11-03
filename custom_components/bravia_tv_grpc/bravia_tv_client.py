@@ -125,6 +125,10 @@ class BraviaTvGrpcClient:
         # threads, so two quick writes to one field (a dragged slider) could
         # otherwise reach the TV reversed and leave the earlier value in place.
         self._write_lock = threading.Lock()
+        # The TV keeps sessions in memory and drops them by age (the key's
+        # expiresIn) or when its Seeds service restarts; a rejected session
+        # is re-established in place rather than through a reload.
+        self._auth_lock = threading.Lock()
         self._on_delta: DeltaCallback | None = None
         self._on_connection_lost: Callable[[], None] | None = None
         self._on_reconnect: Callable[[], None] | None = None
@@ -164,6 +168,48 @@ class BraviaTvGrpcClient:
         self._session_random = resp.session_random
         if not self._session_random:
             raise BraviaTvAuthError("GetSessionRandom returned no session_random")
+
+    _SESSION_REJECTED = (
+        grpc.StatusCode.INVALID_ARGUMENT,
+        grpc.StatusCode.UNAUTHENTICATED,
+        grpc.StatusCode.PERMISSION_DENIED,
+    )
+
+    def _with_session_retry(self, attempt: Any, timeout: float) -> Any:
+        """Run ``attempt``; if the TV rejects the session, re-authenticate in
+        place and run it once more."""
+        try:
+            return attempt()
+        except grpc.RpcError as err:
+            if err.code() not in self._SESSION_REJECTED:
+                raise
+            _LOGGER.info(
+                "TV rejected the session (%s); re-authenticating in place", err.code()
+            )
+            self._reauthenticate(timeout)
+            return attempt()
+
+    def _reauthenticate(self, timeout: float = 5.0) -> None:
+        with self._auth_lock:
+            if self._stub is None:
+                raise BraviaTvConnectionError("not connected")
+            self._authenticate(timeout=timeout)
+
+    def rekey(
+        self,
+        hmac_key: str,
+        key_id: str | None,
+        session_key: str | None,
+        timeout: float = 5.0,
+    ) -> None:
+        """Switch to freshly issued session keys and re-run the handshake."""
+        with self._auth_lock:
+            self._hmac_key = hmac_key
+            self._session_key = session_key
+            if key_id:
+                self._session_id = key_id
+            if self._stub is not None:
+                self._authenticate(timeout=timeout)
 
     def close(self) -> None:
         self.stop_notify()
@@ -219,23 +265,27 @@ class BraviaTvGrpcClient:
         read_paths = paths if paths is not None else self._safe_get_states_paths
         if not read_paths:
             return {}
-        # Build once to sign the body, then rebuild with the real auth token.
-        req = build_get_states_with_auth_request(
-            read_paths,
-            session_random=self._session_random,
-            session_id=self._session_id,
-            auth_token=b"\x00" * 32,
-        )
-        token = sign_get_states_request_body(self._hmac_key, req)
-        req = build_get_states_with_auth_request(
-            read_paths,
-            session_random=self._session_random,
-            session_id=self._session_id,
-            auth_token=token,
-        )
-        call = self._raw_unary(_GET_STATES_METHOD)
-        raw = call(req, timeout=timeout)
-        return parse_get_states_response(raw)
+
+        def attempt() -> dict[str, Any]:
+            # Build once to sign the body, then rebuild with the real auth token.
+            req = build_get_states_with_auth_request(
+                read_paths,
+                session_random=self._session_random,
+                session_id=self._session_id,
+                auth_token=b"\x00" * 32,
+            )
+            token = sign_get_states_request_body(self._hmac_key, req)
+            req = build_get_states_with_auth_request(
+                read_paths,
+                session_random=self._session_random,
+                session_id=self._session_id,
+                auth_token=token,
+            )
+            call = self._raw_unary(_GET_STATES_METHOD)
+            raw = call(req, timeout=timeout)
+            return parse_get_states_response(raw)
+
+        return self._with_session_retry(attempt, timeout)
 
     def read_application_list(self, timeout: float = 8.0) -> list[dict]:
         """Read the installed-app list (nonce-gated, AES-GCM encrypted).
@@ -323,8 +373,12 @@ class BraviaTvGrpcClient:
         if self._stub is None or self._session_random is None:
             raise BraviaTvConnectionError("not connected")
         with self._write_lock:
-            self._confirm_prerequisites(path, timeout)
-            return self._exec(path, timeout, **self._value_kwargs(path, value))
+
+            def attempt() -> bool:
+                self._confirm_prerequisites(path, timeout)
+                return self._exec(path, timeout, **self._value_kwargs(path, value))
+
+            return self._with_session_retry(attempt, timeout)
 
     def _exec(self, path: str, timeout: float, **value_kwargs: Any) -> bool:
         token = sign_exec_auth_token(
@@ -463,6 +517,18 @@ class BraviaTvGrpcClient:
                     err.code(),
                     failures,
                 )
+                if err.code() in self._SESSION_REJECTED:
+                    # The TV forgot our session (keys lapsed or its control
+                    # service restarted): re-handshake before re-subscribing
+                    # instead of counting towards a reload.
+                    try:
+                        self._reauthenticate()
+                        failures = 0
+                        _LOGGER.info(
+                            "re-authenticated after the TV rejected the session"
+                        )
+                    except Exception as reauth_err:  # noqa: BLE001
+                        _LOGGER.debug("re-authentication failed: %s", reauth_err)
                 if failures >= 3 and self._on_connection_lost is not None:
                     _LOGGER.warning(
                         "Notify connection lost after %d attempts; requesting reload",

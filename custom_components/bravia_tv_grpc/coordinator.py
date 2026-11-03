@@ -23,7 +23,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -131,6 +131,11 @@ _AGENT_PAIR_WINDOW = 60
 _AGENT_PAIR_RETRY = timedelta(minutes=10)
 _AGENT_THEMES_INTERVAL = timedelta(hours=1)
 _AGENT_BACKOFF_MAX = 60
+# Session keys last 24 h and the TV forgets the session when they lapse;
+# renew this long before expiry, in place, and retry this often on failure.
+_KEY_RENEWAL_LEAD = timedelta(hours=1)
+_KEY_RENEWAL_RETRY = timedelta(minutes=10)
+_KEY_RENEWAL_FALLBACK = timedelta(hours=23)
 # How often to look for an agent that was not there at startup (installed or
 # first opened later), so it is picked up without a reload.
 _AGENT_PROBE_INTERVAL = 300
@@ -185,6 +190,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._agent_task: asyncio.Task | None = None
         self._agent_last_pair: datetime | None = None
         self._agent_themes_at: datetime | None = None
+        self._cancel_key_renewal: Any = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -214,7 +220,58 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self._async_cloud_poll, _CLOUD_POLL_INTERVAL
             )
         await self._async_refresh_app_list()
+        self._schedule_key_renewal()
         await self.async_start_agent()
+
+    # -- session key renewal ------------------------------------------------
+    def _schedule_key_renewal(self, delay: timedelta | None = None) -> None:
+        """Renew the Sony session keys an hour before they expire, so the TV's
+        session never lapses underneath a working connection."""
+        if self._cancel_key_renewal is not None:
+            self._cancel_key_renewal()
+            self._cancel_key_renewal = None
+        if delay is None:
+            creds = self._cloud_credentials() or {}
+            expires_at = creds.get("session_keys_expires_at")
+            if isinstance(expires_at, int | float):
+                seconds = expires_at - time.time() - _KEY_RENEWAL_LEAD.total_seconds()
+                delay = timedelta(seconds=max(60.0, seconds))
+            else:
+                delay = _KEY_RENEWAL_FALLBACK
+        _LOGGER.debug("Sony session key renewal in %s", delay)
+        self._cancel_key_renewal = async_call_later(
+            self.hass, delay, self._async_renew_keys
+        )
+
+    async def _async_renew_keys(self, _now: Any = None) -> None:
+        self._cancel_key_renewal = None
+        creds = self._cloud_credentials()
+        device_id = self._cloud_device_id(creds) if creds else None
+        if not creds or not device_id:
+            return
+        try:
+            new_creds = await cred.async_refresh_credentials(
+                async_get_clientsession(self.hass), creds, device_id
+            )
+            self.hass.config_entries.async_update_entry(
+                self._entry,
+                data={
+                    **self._entry.data,
+                    CONF_GRPC_KEYS: cred.credentials_to_json(new_creds),
+                },
+            )
+            await self.hass.async_add_executor_job(
+                self.client.rekey,
+                new_creds["hmac_key"],
+                new_creds.get("key_id"),
+                new_creds.get("session_key"),
+            )
+        except Exception as err:  # noqa: BLE001 - transient cloud/TV errors
+            _LOGGER.warning("Sony session key renewal failed, retrying later: %s", err)
+            self._schedule_key_renewal(_KEY_RENEWAL_RETRY)
+            return
+        _LOGGER.info("Sony session keys renewed in place")
+        self._schedule_key_renewal()
 
     # -- BRAVIA TV agent (companion app) ---------------------------------
     @property
@@ -856,6 +913,23 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         HomeAssistantError when the cloud is unreachable or the TV rejects the
         command (e.g. ``POWER_OFF`` while in standby).
         """
+        for command in commands:
+            # Validate enum values against what the TV advertised before the
+            # round trip: the cloud would only answer invalidCommandArgsErrors.
+            if command.get("command") != "set":
+                continue
+            allowed = self.cloud_values.get(str(command.get("name")))
+            value = (command.get("args") or {}).get("value")
+            if allowed and isinstance(value, str) and value not in allowed:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="cloud_invalid_value",
+                    translation_placeholders={
+                        "name": name,
+                        "value": value,
+                        "allowed": ", ".join(allowed),
+                    },
+                )
         creds = self._cloud_credentials()
         device_id = self._cloud_device_id(creds) if creds else None
         if not device_id:
@@ -977,6 +1051,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._cancel_key_renewal is not None:
+            self._cancel_key_renewal()
+            self._cancel_key_renewal = None
         if self._agent_task is not None:
             self._agent_task.cancel()
             self._agent_task = None

@@ -268,3 +268,59 @@ async def test_read_paths_merges_state(hass: HomeAssistant) -> None:
     assert got == {"sound_setting.audio_output.activation_result": True}
     assert coordinator.data["sound_setting.audio_output.activation_result"] is True
     await coordinator.async_shutdown()
+
+
+async def test_cloud_set_rejects_values_the_tv_does_not_advertise(hass: HomeAssistant):
+    """An enum value outside the advertised list fails locally, no round trip."""
+    entry = _entry(hass)
+    coordinator = BraviaTvCoordinator(hass, entry, _client())
+    coordinator.cloud_capabilities = {"sleep_timer": ("set",)}
+    coordinator.cloud_values = {"sleep_timer": ("off", "30min")}
+    with patch(f"{COORD}.cloud.async_run_commands", new=AsyncMock()) as run:
+        with pytest.raises(HomeAssistantError):
+            await coordinator.async_cloud_command(
+                "sleep_timer", [cloud.set_command("sleep_timer", "99min")]
+            )
+        run.assert_not_called()
+
+
+async def test_key_renewal_scheduled_before_expiry(hass: HomeAssistant):
+    import time as _time
+
+    entry = _entry(hass)
+    coordinator = BraviaTvCoordinator(hass, entry, _client())
+    expires = _time.time() + 5 * 3600
+    with (
+        patch(f"{COORD}.async_call_later") as later,
+        patch.object(
+            coordinator,
+            "_cloud_credentials",
+            return_value={"session_keys_expires_at": expires},
+        ),
+    ):
+        coordinator._schedule_key_renewal()
+    delay = later.call_args[0][1]
+    assert 3.9 * 3600 <= delay.total_seconds() <= 4 * 3600
+
+
+async def test_key_renewal_persists_and_rekeys(hass: HomeAssistant):
+    entry = _entry(hass)
+    client = _client()
+    coordinator = BraviaTvCoordinator(hass, entry, client)
+    new_creds = {
+        "device_id": "dev",
+        "hmac_key": "cd" * 32,
+        "key_id": "k2",
+        "session_key": "ef" * 32,
+    }
+    with (
+        patch(
+            f"{COORD}.cred.async_refresh_credentials",
+            new=AsyncMock(return_value=new_creds),
+        ),
+        patch(f"{COORD}.async_call_later") as later,
+    ):
+        await coordinator._async_renew_keys()
+    assert '"k2"' in entry.data[CONF_GRPC_KEYS]
+    client.rekey.assert_called_once_with("cd" * 32, "k2", "ef" * 32)
+    later.assert_called()

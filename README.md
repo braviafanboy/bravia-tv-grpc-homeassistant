@@ -329,6 +329,14 @@ sign-in. The config dialog shows a **"Sign in to Sony"** step with a link and a
 > **local** gRPC session keys for the TV; those keys are stored in the config
 > entry and all subsequent control happens on your LAN.
 
+### Session handling
+
+The TV keeps the gRPC session in memory and forgets it when the Sony session
+keys lapse (24 hours) or when its control service restarts. The integration
+renews the keys an hour before they expire and re-runs the handshake in place
+when the TV rejects a session, so neither case interrupts control or marks
+entities unavailable.
+
 ### Troubleshooting
 
 - **"Could not find the gRPC control service"** — confirm the TV is powered on
