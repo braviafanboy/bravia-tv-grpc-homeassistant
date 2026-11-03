@@ -30,6 +30,8 @@ from homeassistant.util import dt as dt_util
 from .bravia_tv_client import BraviaTvGrpcClient
 from .const import (
     AGENT_CLIENT_NAME,
+    CONF_AGENT_CERT,
+    CONF_AGENT_FINGERPRINT,
     CONF_AGENT_TOKEN,
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
@@ -129,6 +131,9 @@ _AGENT_PAIR_WINDOW = 60
 _AGENT_PAIR_RETRY = timedelta(minutes=10)
 _AGENT_THEMES_INTERVAL = timedelta(hours=1)
 _AGENT_BACKOFF_MAX = 60
+# How often to look for an agent that was not there at startup (installed or
+# first opened later), so it is picked up without a reload.
+_AGENT_PROBE_INTERVAL = 300
 
 
 def agent_path(block: str) -> str:
@@ -236,17 +241,41 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         host = self._entry.data.get("host")
         if not host or self._agent_task is not None:
             return
+        cert = agentmod.decode_cert(self._entry.data.get(CONF_AGENT_CERT))
         client = agentmod.AgentClient(
             async_get_clientsession(self.hass),
             host,
             token=self._entry.data.get(CONF_AGENT_TOKEN),
+            ssl_context=await self.hass.async_add_executor_job(
+                agentmod.make_ssl_context, cert
+            ),
+            cert=cert,
         )
         try:
             self.agent_info = await client.async_info()
+        except agentmod.AgentFingerprintMismatch:
+            # The agent was reinstalled (new key pair): forget the pin and the
+            # token and pair afresh, learning the new certificate.
+            _LOGGER.info("BRAVIA agent on %s has a new certificate; re-pairing", host)
+            await self._async_unpin_agent(client)
+            try:
+                self.agent_info = await client.async_info()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("no BRAVIA agent on %s: %s", host, err)
+                self._schedule_agent_probe()
+                return
         except Exception as err:  # noqa: BLE001 - absence must never break setup
             _LOGGER.debug("no BRAVIA agent on %s: %s", host, err)
+            self._schedule_agent_probe()
             return
         self.agent = client
+        if client.token and not (self.agent_info.get("pairing") or {}).get(
+            "paired", True
+        ):
+            # An unpaired agent (reinstalled, or unpaired from its screen)
+            # answers any token; pair again so ours is the only one it takes.
+            _LOGGER.info("BRAVIA agent on %s is unpaired; pairing", host)
+            client.token = None
         info = self.agent_info.get("agent") or {}
         _LOGGER.info(
             "BRAVIA agent %s found on %s (contract %s)",
@@ -256,6 +285,20 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._agent_task = self._entry.async_create_background_task(
             self.hass, self._async_agent_loop(), name="bravia_tv_agent"
+        )
+
+    def _schedule_agent_probe(self) -> None:
+        """Keep looking for an agent that is not (yet) answering."""
+        if self._agent_task is not None:
+            return
+
+        async def probe_later() -> None:
+            await asyncio.sleep(_AGENT_PROBE_INTERVAL)
+            self._agent_task = None
+            await self.async_start_agent()
+
+        self._agent_task = self._entry.async_create_background_task(
+            self.hass, probe_later(), name="bravia_tv_agent_probe"
         )
 
     def _set_agent_online(self, online: bool) -> None:
@@ -291,6 +334,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     await asyncio.sleep(60)
                     continue
                 self._apply_agent_document(await client.async_state())
+                await self._async_pin_agent_certificate()
                 backoff = 5
                 await self._async_agent_refresh_themes()
                 async for event, payload in client.async_events():
@@ -301,11 +345,41 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._set_agent_online(False)
                 client.token = None
                 await asyncio.sleep(5)
+            except agentmod.AgentFingerprintMismatch:
+                _LOGGER.info("BRAVIA agent certificate changed; re-pairing")
+                self._set_agent_online(False)
+                await self._async_unpin_agent(client)
+                await asyncio.sleep(5)
             except agentmod.AgentError as err:
                 _LOGGER.debug("BRAVIA agent link lost: %s", err)
                 self._set_agent_online(False)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _AGENT_BACKOFF_MAX)
+
+    async def _async_pin_agent_certificate(self) -> None:
+        """Pin the certificate behind an authenticated conversation when none
+        is pinned yet (just paired, or a token from before the agent served
+        TLS). From then on the handshake itself rejects any other."""
+        client = self.agent
+        if client is None or client.pinned or not client.seen_cert:
+            return
+        cert = client.seen_cert
+        client.pin(
+            cert,
+            await self.hass.async_add_executor_job(agentmod.make_ssl_context, cert),
+        )
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            data={
+                **self._entry.data,
+                CONF_AGENT_CERT: agentmod.encode_cert(cert),
+                CONF_AGENT_FINGERPRINT: agentmod.fingerprint_of(cert),
+            },
+        )
+        _LOGGER.info(
+            "pinned the BRAVIA agent certificate %s…",
+            agentmod.fingerprint_of(cert)[:16],
+        )
 
     async def _async_agent_refresh_themes(self) -> None:
         now = dt_util.utcnow()
@@ -336,6 +410,11 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._agent_last_pair and now - self._agent_last_pair < _AGENT_PAIR_RETRY:
             return False
         self._agent_last_pair = now
+        # Pairing means the previous relationship is over: any pinned
+        # certificate belongs to that earlier life and would make the
+        # verification of a cloud-delivered token fail for the wrong reason.
+        if client.pinned:
+            await self._async_unpin_agent(client)
         token: str | None = None
         if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
             candidate = agentmod.new_token()
@@ -391,11 +470,27 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning("BRAVIA agent pairing window closed without a token")
                 client.token = None
                 return False
+        # Pin the certificate the pairing conversation ran over: from here on
+        # the agent must present exactly this one.
         self.hass.config_entries.async_update_entry(
             self._entry, data={**self._entry.data, CONF_AGENT_TOKEN: token}
         )
+        await self._async_pin_agent_certificate()
         _LOGGER.info("paired with the BRAVIA agent")
         return True
+
+    async def _async_unpin_agent(self, client: agentmod.AgentClient) -> None:
+        client.token = None
+        client.pin(
+            None,
+            await self.hass.async_add_executor_job(agentmod.make_ssl_context, None),
+        )
+        data = {
+            k: v
+            for k, v in self._entry.data.items()
+            if k not in (CONF_AGENT_TOKEN, CONF_AGENT_CERT, CONF_AGENT_FINGERPRINT)
+        }
+        self.hass.config_entries.async_update_entry(self._entry, data=data)
 
     async def async_get_agent_artwork(self) -> bytes | None:
         """Now-playing artwork from the agent, or None."""

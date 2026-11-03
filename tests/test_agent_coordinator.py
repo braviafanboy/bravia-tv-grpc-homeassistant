@@ -12,6 +12,8 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 from homeassistant.core import HomeAssistant  # noqa: E402
 
 from custom_components.bravia_tv_grpc.const import (  # noqa: E402
+    CONF_AGENT_CERT,
+    CONF_AGENT_FINGERPRINT,
     CONF_AGENT_TOKEN,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
@@ -52,6 +54,16 @@ def _enable(enable_custom_integrations):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _stub_ssl():
+    """The fakes never open sockets; keep certificate handling symbolic for
+    the whole test, including the background task that pins after pairing."""
+    with patch(
+        f"{COORD}.agentmod.make_ssl_context", side_effect=lambda cert: ("ctx", cert)
+    ):
+        yield
+
+
 def _client() -> MagicMock:
     client = MagicMock()
     client.capabilities = {}
@@ -81,10 +93,17 @@ def _entry(hass: HomeAssistant, **extra):
 class FakeAgent:
     """Stand-in for agentmod.AgentClient driven by the test."""
 
-    def __init__(self, session, host, port=8585, token=None):
+    PRESENTED = b"cert-A"  # the certificate the fake "presents"
+
+    def __init__(
+        self, session, host, port=8585, token=None, ssl_context=None, cert=None
+    ):
         self.host = host
         self.port = port
         self.token = token
+        self.ssl_context = ssl_context
+        self.cert = cert  # the pinned certificate, if any
+        self.seen_cert = None
         self.info = dict(_INFO)
         self.state_doc = dict(_DOC)
         self.events: asyncio.Queue = asyncio.Queue()
@@ -99,10 +118,29 @@ class FakeAgent:
     def url(self, path):
         return self.base_url + path
 
+    @property
+    def pinned(self):
+        return self.cert is not None
+
+    @property
+    def fingerprint(self):
+        return agentmod.fingerprint_of(self.cert) if self.cert else None
+
+    def pin(self, cert, ssl_context):
+        self.cert = cert
+        self.ssl_context = ssl_context
+
+    def _handshake(self):
+        if self.cert is not None and self.cert != self.PRESENTED:
+            raise agentmod.AgentFingerprintMismatch("pin")
+        self.seen_cert = self.PRESENTED
+
     async def async_info(self):
+        self._handshake()
         return self.info
 
     async def async_state(self):
+        self._handshake()
         if not self.token or self.token == self.reject_token:
             raise agentmod.AgentUnauthorized("state")
         return self.state_doc
@@ -111,12 +149,14 @@ class FakeAgent:
         return [{"id": "theme://a", "title": "A"}]
 
     async def async_pair(self, name):
+        self._handshake()
         if not self.pair_tokens:
             raise agentmod.AgentPairingClosed("closed")
         self.token = self.pair_tokens.pop(0)
         return self.token
 
     async def async_events(self):
+        self._handshake()
         self.stream_started.set()
         while True:
             ev = await self.events.get()
@@ -143,10 +183,11 @@ async def _start(hass, entry, fake_holder, *, configure=None, cloud_caps=None):
 
     The agent task starts eagerly inside ``async_start``, so anything the
     fake must know (pair tokens, …) is applied by ``configure`` at creation.
+    ``make_ssl_context`` is stubbed: the fakes never open sockets.
     """
 
-    def factory(session, host, port=8585, token=None):
-        fake = FakeAgent(session, host, port, token)
+    def factory(session, host, port=8585, token=None, ssl_context=None, cert=None):
+        fake = FakeAgent(session, host, port, token, ssl_context, cert)
         if configure:
             configure(fake)
         fake_holder.append(fake)
@@ -180,6 +221,10 @@ async def test_stored_token_streams_state(hass: HomeAssistant):
     assert coordinator.agent_value("bluetooth", "remote", "battery_pct") == 30
     assert coordinator.agent_themes[0]["id"] == "theme://a"
     assert entry.data[CONF_AGENT_TOKEN] == "tok"
+    # A pre-TLS token still works; the certificate gets pinned on first use.
+    assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(
+        FakeAgent.PRESENTED
+    )
     await coordinator.async_shutdown()
 
 
@@ -197,6 +242,10 @@ async def test_pairs_via_local_launch_when_no_token(hass: HomeAssistant):
         "system_setting.application", agentmod.AGENT_PACKAGE
     )
     assert entry.data[CONF_AGENT_TOKEN] == "fresh"
+    assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(
+        FakeAgent.PRESENTED
+    )
+    assert entry.data[CONF_AGENT_CERT] == agentmod.encode_cert(FakeAgent.PRESENTED)
     assert coordinator.data[AGENT_ONLINE] is True
     await coordinator.async_shutdown()
 
@@ -247,6 +296,8 @@ async def test_no_agent_is_harmless(hass: HomeAssistant):
         await coordinator.async_start()
     assert coordinator.agent is None
     assert AGENT_ONLINE not in coordinator.data
+    # It keeps looking: a later install is picked up without a reload.
+    assert coordinator._agent_task is not None
     await coordinator.async_shutdown()
 
 
@@ -258,4 +309,46 @@ async def test_offline_tv_marks_agent_offline(hass: HomeAssistant):
     coordinator._set_agent_online(False)
     assert coordinator.data[AGENT_ONLINE] is False
     assert coordinator.data[agent_path("media")] is None
+    await coordinator.async_shutdown()
+
+
+async def test_new_certificate_triggers_repair(hass: HomeAssistant):
+    """A pinned fingerprint that no longer matches (reinstalled agent) clears
+    the pin and the token and pairs again, learning the new certificate."""
+    entry = _entry(
+        hass,
+        **{
+            CONF_AGENT_TOKEN: "old",
+            CONF_AGENT_CERT: agentmod.encode_cert(b"cert-OLD"),
+            CONF_AGENT_FINGERPRINT: agentmod.fingerprint_of(b"cert-OLD"),
+        },
+    )
+    fakes: list[FakeAgent] = []
+    with patch(f"{COORD}.asyncio.sleep", new=AsyncMock()):
+        coordinator = await _start(
+            hass, entry, fakes, configure=lambda f: f.pair_tokens.append("renewed")
+        )
+        await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "renewed")
+    assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(
+        FakeAgent.PRESENTED
+    )
+    assert fakes[0].cert == FakeAgent.PRESENTED
+    assert coordinator.data[AGENT_ONLINE] is True
+    await coordinator.async_shutdown()
+
+
+async def test_unpaired_agent_forces_pairing_despite_stored_token(hass: HomeAssistant):
+    """An agent that reports itself unpaired accepts any token, so a stored
+    token must not be trusted: pair again."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "stale"})
+    fakes: list[FakeAgent] = []
+
+    def configure(f):
+        f.info = {**_INFO, "pairing": {"paired": False}}
+        f.pair_tokens.append("fresh")
+
+    with patch(f"{COORD}.asyncio.sleep", new=AsyncMock()):
+        coordinator = await _start(hass, entry, fakes, configure=configure)
+        await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "fresh")
+    assert coordinator.data[AGENT_ONLINE] is True
     await coordinator.async_shutdown()

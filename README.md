@@ -186,7 +186,12 @@ How it works:
    the agent on the TV, which opens a 60-second pairing window, and pairs
    through it. The token is stored in the config entry; the agent accepts
    nothing else afterwards.
-3. State arrives over the agent's event stream and is unavailable whenever
+3. The link is HTTPS. The agent uses a self-signed certificate it generates
+   on first run; the integration learns it during pairing and from then on
+   trusts exactly that certificate, so nothing else on the network can pose
+   as the agent and the token never travels in clear. A reinstalled agent has
+   a new certificate and a new pairing follows automatically.
+4. State arrives over the agent's event stream and is unavailable whenever
    the TV is off, since the TV leaves the LAN in standby.
 
 Diagnostics include the agent's version and granted permissions. If you

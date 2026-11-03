@@ -24,6 +24,12 @@ CONF_FW_PENDING = "fw_update_pending"
 # app on the TV that reports lux, now-playing, remote battery, …). Absent until
 # an agent has been discovered and paired.
 CONF_AGENT_TOKEN = "agent_token"
+# SHA-256 of the agent's self-signed TLS certificate (DER), learned from the
+# handshake during pairing and pinned on every later connection.
+CONF_AGENT_FINGERPRINT = "agent_fingerprint"
+# The agent's self-signed certificate (DER, base64): the TLS trust anchor the
+# client verifies against, so a different certificate fails the handshake.
+CONF_AGENT_CERT = "agent_cert"
 # Name the agent shows for the paired client.
 AGENT_CLIENT_NAME = "Home Assistant"
 
