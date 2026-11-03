@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -661,7 +662,7 @@ async def test_picture_refresh_on_grpc_picture_set_changes(hass: HomeAssistant):
     fake = fakes[0]
 
     def advance():
-        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=4))
 
     coordinator._state["display_setting.picture_mode"] = "custom"
     coordinator._apply_delta("display_setting.picture_mode", "cinema")
@@ -669,23 +670,33 @@ async def test_picture_refresh_on_grpc_picture_set_changes(hass: HomeAssistant):
     advance()
     await _until(lambda: fake.refreshes == 1)
     video = "playback_control.signal_info.video"
-    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 1920}])  # first
+
+    def sig(hdr, width):
+        # As the TV sends it: a JSON-encoded list (seen live).
+        return json.dumps([{"hdr_type": hdr, "width": width, "frame_rate": 23.976}])
+
+    coordinator._apply_delta(video, sig("sdr", 1920))  # first
     advance()
     await _until(lambda: fake.refreshes == 2)
-    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 3840}])
+    coordinator._apply_delta(video, sig("sdr", 3840))
     coordinator._apply_delta(video, None)  # no video: SDR values on the TV
-    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 1280}])
+    coordinator._apply_delta(video, "[]")
+    coordinator._apply_delta(video, sig("sdr", 1280))
     advance()
     await hass.async_block_till_done()
     assert fake.refreshes == 2  # resolution / no video / SDR: same picture set
     coordinator._apply_delta(video, None)
-    coordinator._apply_delta(video, [{"hdr_type": "hdr10", "width": 3840}])
+    coordinator._apply_delta(video, sig("hdr10", 3840))
     advance()
     await _until(lambda: fake.refreshes == 3)
+    coordinator._apply_delta(video, sig("hdr10", 1920))  # resolution only
+    advance()
+    await hass.async_block_till_done()
+    assert fake.refreshes == 3
     coordinator._apply_delta(video, None)  # HDR stopped: TV back on SDR values
     advance()
     await _until(lambda: fake.refreshes == 4)
-    coordinator._apply_delta(video, [{"hdr_type": "hdr10", "width": 3840}])
+    coordinator._apply_delta(video, sig("dolby", 3840))
     advance()
     await _until(lambda: fake.refreshes == 5)
     await coordinator.async_shutdown()

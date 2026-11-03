@@ -53,6 +53,7 @@ from .grpc import agent as agentmod
 from .grpc import cloud_commands as cloud
 from .grpc import credentials as cred
 from .grpc.application_list import APPLICATION_LIST_PATH
+from .util import parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,6 +159,9 @@ _PICTURE_TRIGGERS = (
 )
 _SIGNAL_VIDEO = "playback_control.signal_info.video"
 _PICTURE_REFRESH_DEBOUNCE = 1.0
+# The TV reports an HDR signal ~2 s before it applies its HDR picture values
+# (measured live: HDR10 at t, values switched at t+1.7…2.1 s); wait past that.
+_HDR_REFRESH_DELAY = 3.0
 # IP control can lag the panel after wake; only report it unreachable after this.
 _REST_UNAVAILABLE_GRACE = timedelta(minutes=3)
 # How often to look for an agent that was not there at startup (installed or
@@ -185,7 +189,11 @@ def rest_options(options: Any) -> tuple[str, int, bool]:
 
 
 def _hdr_type(value: Any) -> Any:
-    entry = value[0] if isinstance(value, list) and value else value
+    """``hdr_type`` of a ``signal_info.video`` value. The TV sends it as a
+    JSON-encoded list (``'[{"hdr_type": "hdr10", ...}]'``); parse it the same
+    way the video signal sensor does."""
+    data = parse_json_value(value)
+    entry = data[0] if isinstance(data, list) and data else data
     return entry.get("hdr_type") if isinstance(entry, dict) else None
 
 
@@ -614,7 +622,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return changed
 
     @callback
-    def _schedule_picture_refresh(self) -> None:
+    def _schedule_picture_refresh(
+        self, delay: float = _PICTURE_REFRESH_DEBOUNCE
+    ) -> None:
         """Debounced re-read after a picture-set change seen on gRPC."""
         if not self.applied_rest_options[2] or self.agent is None:
             return
@@ -629,9 +639,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._async_picture_refresh(), name="bravia_tv_picture_refresh"
                 )
 
-        self._cancel_picture_refresh = async_call_later(
-            self.hass, _PICTURE_REFRESH_DEBOUNCE, _fire
-        )
+        self._cancel_picture_refresh = async_call_later(self.hass, delay, _fire)
 
     async def _async_picture_refresh(self) -> None:
         try:
@@ -1354,9 +1362,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         previous = self._state.get(path)
         self._state[path] = value
-        if _picture_set_changed(path, previous, value) or (
-            path == _SIGNAL_VIDEO and self._hdr_changed(value)
-        ):
+        if path == _SIGNAL_VIDEO and self._hdr_changed(value):
+            self._schedule_picture_refresh(_HDR_REFRESH_DELAY)
+        elif _picture_set_changed(path, previous, value):
             self._schedule_picture_refresh()
         if path == "power" and not value and cloud_path("sleep_timer") in self._state:
             # The TV clears its sleep timer whenever it powers off (see Sony's
