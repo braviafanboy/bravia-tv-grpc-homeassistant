@@ -202,7 +202,7 @@ _AGENT_BOOL_SENSORS: dict[str, tuple] = {
 
 
 class BraviaTvAgentBoolSensor(BraviaTvAgentEntity, BinarySensorEntity):
-    """A boolean reported by the BRAVIA TV agent."""
+    """A boolean reported by the HA TV Agent."""
 
     def __init__(self, coordinator: BraviaTvCoordinator, key: str, spec: tuple) -> None:
         block, keys, device_class, category = spec

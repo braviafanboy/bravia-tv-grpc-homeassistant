@@ -513,7 +513,7 @@ _AGENT_SENSORS: dict[str, tuple] = {
 
 
 class BraviaTvAgentSensor(BraviaTvAgentEntity, SensorEntity):
-    """A numeric reading reported by the BRAVIA TV agent."""
+    """A numeric reading reported by the HA TV Agent."""
 
     def __init__(self, coordinator: BraviaTvCoordinator, key: str, spec: tuple) -> None:
         block, keys, device_class, unit, state_class, category, enabled = spec

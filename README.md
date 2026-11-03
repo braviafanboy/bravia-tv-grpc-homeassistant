@@ -1,5 +1,7 @@
 # Bravia TV (gRPC) — Home Assistant integration
 
+*Community project; not affiliated with Sony or Home Assistant. BRAVIA is a trademark of Sony.*
+
 A Home Assistant custom integration for controlling Sony BRAVIA TVs over the
 **Sony ControlDeviceService gRPC API** — the same local control plane used by
 the BRAVIA Connect mobile app. Unlike the HTTP REST API, this protocol is
@@ -154,12 +156,14 @@ installed, and release notes depend on Sony's page for a pending update. On
 other models, `tools/cloud_command_probe.py caps` shows what the TV
 advertises and `send <name> set <value>` exercises one capability.
 
-## BRAVIA TV agent (optional companion app)
+## HA TV Agent (optional companion app)
+
+*The agent is part of this project, not a Sony app. Not affiliated with Sony or Home Assistant.*
 
 Some things the TV never exposes over gRPC, the cloud or REST: the ambient
 light sensor, the ambient temperature, what is actually playing, the
 remote's battery, and whether the panel is lit. The optional
-[BRAVIA TV agent](https://github.com/braviafanboy/bravia-tv-agent) is a small
+[HA TV Agent](https://github.com/braviafanboy/bravia-tv-agent) is a small
 sideloaded Android TV app that reads those on the TV and serves them to this
 integration over the LAN. Nothing changes without it; with it, the TV device
 gains:
@@ -209,7 +213,7 @@ automatic.
    the agent from Home Assistant needs *Install unknown apps*; Android only
    grants these through its own prompts on the TV. Press the **Agent
    setup** button on the TV's device page in Home Assistant, or open the
-   BRAVIA agent app from the TV's launcher and press OK, then accept the
+   HA TV Agent app from the TV's launcher and press OK, then accept the
    prompts with the remote; the agent closes again once nothing is missing.
    If everything is already granted, the button says so in Home Assistant and
    does not touch the TV. A repair notice reminds you while now-playing or

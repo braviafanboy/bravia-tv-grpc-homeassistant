@@ -194,7 +194,7 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
             }.get(str(media.get("state")), MediaPlayerState.ON)
         return MediaPlayerState.ON
 
-    # -- now playing (BRAVIA TV agent) --------------------------------------
+    # -- now playing (HA TV Agent) --------------------------------------
     @property
     def _agent_media(self) -> dict | None:
         """The agent's media block while the TV is on and the agent is online."""

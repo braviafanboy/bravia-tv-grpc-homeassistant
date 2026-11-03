@@ -145,10 +145,10 @@ class BraviaTvFirmwareUpdate(BraviaTvEntity, UpdateEntity):
 
 
 class BraviaTvAgentUpdate(BraviaTvAgentEntity, UpdateEntity):
-    """The BRAVIA agent app on the TV, updated from the release manifest."""
+    """The HA TV Agent app on the TV, updated from the release manifest."""
 
     _attr_translation_key = "agent"
-    _attr_title = "BRAVIA agent"
+    _attr_title = "HA TV Agent"
     _attr_supported_features = (
         UpdateEntityFeature.INSTALL | UpdateEntityFeature.RELEASE_NOTES
     )

@@ -1,4 +1,4 @@
-"""Client for the BRAVIA TV agent (the companion app running on the TV).
+"""Client for the HA TV Agent (the companion app running on the TV).
 
 Pure protocol module (aiohttp only, no Home Assistant): the agent serves a JSON
 document over plain HTTP on the LAN (default port 8585), advertises itself with

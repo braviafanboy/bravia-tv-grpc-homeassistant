@@ -1,4 +1,4 @@
-"""Coordinator tests for the BRAVIA TV agent link (require HA harness)."""
+"""Coordinator tests for the HA TV Agent link (require HA harness)."""
 
 from __future__ import annotations
 

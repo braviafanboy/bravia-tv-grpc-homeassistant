@@ -184,7 +184,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cloud_token_expires_at = 0.0
         self._cloud_lock = asyncio.Lock()
         self._cancel_cloud_poll: Any = None
-        # BRAVIA TV agent (companion app): client once discovered on the TV's
+        # HA TV Agent (companion app): client once discovered on the TV's
         # host, its /v1/info document, the Living Decor theme list it serves,
         # the background task that keeps its event stream open, and the last
         # pairing attempt (rate limit for re-pairing after a 401).
@@ -280,7 +280,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Sony session keys renewed in place")
         self._schedule_key_renewal()
 
-    # -- BRAVIA TV agent (companion app) ---------------------------------
+    # -- HA TV Agent (companion app) ---------------------------------
     @property
     def agent_online(self) -> bool:
         return bool(self._state.get(AGENT_ONLINE))
@@ -320,16 +320,16 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except agentmod.AgentFingerprintMismatch:
             # The agent was reinstalled (new key pair): forget the pin and the
             # token and pair afresh, learning the new certificate.
-            _LOGGER.info("BRAVIA agent on %s has a new certificate; re-pairing", host)
+            _LOGGER.info("HA TV Agent on %s has a new certificate; re-pairing", host)
             await self._async_unpin_agent(client)
             try:
                 self.agent_info = await client.async_info()
             except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("no BRAVIA agent on %s: %s", host, err)
+                _LOGGER.debug("no HA TV Agent on %s: %s", host, err)
                 self._schedule_agent_probe()
                 return
         except Exception as err:  # noqa: BLE001 - absence must never break setup
-            _LOGGER.debug("no BRAVIA agent on %s: %s", host, err)
+            _LOGGER.debug("no HA TV Agent on %s: %s", host, err)
             self._schedule_agent_probe()
             return
         self.agent = client
@@ -338,11 +338,11 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             # An unpaired agent (reinstalled, or unpaired from its screen)
             # answers any token; pair again so ours is the only one it takes.
-            _LOGGER.info("BRAVIA agent on %s is unpaired; pairing", host)
+            _LOGGER.info("HA TV Agent on %s is unpaired; pairing", host)
             client.token = None
         info = self.agent_info.get("agent") or {}
         _LOGGER.info(
-            "BRAVIA agent %s found on %s (contract %s)",
+            "HA TV Agent %s found on %s (contract %s)",
             info.get("version"),
             host,
             info.get("contract"),
@@ -519,17 +519,17 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if event == "state":
                         self._apply_agent_document(payload)
             except agentmod.AgentUnauthorized:
-                _LOGGER.info("BRAVIA agent rejected the stored token; re-pairing")
+                _LOGGER.info("HA TV Agent rejected the stored token; re-pairing")
                 self._set_agent_online(False)
                 client.token = None
                 await asyncio.sleep(5)
             except agentmod.AgentFingerprintMismatch:
-                _LOGGER.info("BRAVIA agent certificate changed; re-pairing")
+                _LOGGER.info("HA TV Agent certificate changed; re-pairing")
                 self._set_agent_online(False)
                 await self._async_unpin_agent(client)
                 await asyncio.sleep(5)
             except agentmod.AgentError as err:
-                _LOGGER.debug("BRAVIA agent link lost: %s", err)
+                _LOGGER.debug("HA TV Agent link lost: %s", err)
                 self._set_agent_online(False)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _AGENT_BACKOFF_MAX)
@@ -555,7 +555,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             },
         )
         _LOGGER.info(
-            "pinned the BRAVIA agent certificate %s…",
+            "pinned the HA TV Agent certificate %s…",
             agentmod.fingerprint_of(cert)[:16],
         )
 
@@ -616,7 +616,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 token = candidate
             except (HomeAssistantError, agentmod.AgentError) as err:
                 _LOGGER.warning(
-                    "BRAVIA agent pairing via the cloud deep link failed (%s); "
+                    "HA TV Agent pairing via the cloud deep link failed (%s); "
                     "falling back to launching the agent on the TV",
                     err,
                 )
@@ -624,15 +624,13 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if token is None:
             if not self.cloud_supports(_AGENT_DEEP_LINK, "post"):
                 _LOGGER.info(
-                    "BRAVIA agent pairing: cloud deep link not available, "
+                    "HA TV Agent pairing: cloud deep link not available, "
                     "launching the agent on the TV for its pairing window"
                 )
             try:
                 await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
             except HomeAssistantError as err:
-                _LOGGER.warning(
-                    "could not launch the BRAVIA agent for pairing: %s", err
-                )
+                _LOGGER.warning("could not launch the HA TV Agent for pairing: %s", err)
                 return False
             deadline = self.hass.loop.time() + _AGENT_PAIR_WINDOW
             while self.hass.loop.time() < deadline:
@@ -645,7 +643,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except agentmod.AgentError as err:
                     _LOGGER.debug("agent pair attempt failed: %s", err)
             if token is None:
-                _LOGGER.warning("BRAVIA agent pairing window closed without a token")
+                _LOGGER.warning("HA TV Agent pairing window closed without a token")
                 client.token = None
                 return False
         # Pin the certificate the pairing conversation ran over: from here on
@@ -654,7 +652,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._entry, data={**self._entry.data, CONF_AGENT_TOKEN: token}
         )
         await self._async_pin_agent_certificate()
-        _LOGGER.info("paired with the BRAVIA agent")
+        _LOGGER.info("paired with the HA TV Agent")
         return True
 
     async def _async_unpin_agent(self, client: agentmod.AgentClient) -> None:

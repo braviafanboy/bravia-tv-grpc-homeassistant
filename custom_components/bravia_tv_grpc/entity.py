@@ -112,7 +112,7 @@ class BraviaTvCloudEntity(BraviaTvEntity):
 
 
 class BraviaTvAgentEntity(BraviaTvEntity):
-    """Base for entities fed by the BRAVIA TV agent (the companion app).
+    """Base for entities fed by the HA TV Agent (the companion app).
 
     State lives under ``agent.<block>`` in the coordinator data and arrives
     over the agent's event stream. The agent is only reachable while the TV

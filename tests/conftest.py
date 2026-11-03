@@ -31,7 +31,7 @@ import pytest  # noqa: E402
 @pytest.fixture(autouse=True)
 def _no_agent_probe(request):
     """Keep the HA-harness tests hermetic: the coordinator probes the TV's host
-    for the BRAVIA agent at start, which would hit the resolver. Tests that
+    for the HA TV Agent at start, which would hit the resolver. Tests that
     exercise the agent opt back in with the ``agent_probe`` marker."""
     if request.node.get_closest_marker("agent_probe") is not None:
         yield

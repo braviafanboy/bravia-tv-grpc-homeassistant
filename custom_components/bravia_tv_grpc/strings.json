@@ -54,7 +54,7 @@
       "message": "{name}: {value} is not one of the values the TV advertises ({allowed})"
     },
     "agent_setup_complete": {
-      "message": "Nothing to set up: the BRAVIA agent on {name} already has every permission it needs."
+      "message": "Nothing to set up: the HA TV Agent on {name} already has every permission it needs."
     }
   },
   "entity": {
@@ -210,7 +210,7 @@
         "name": "Firmware"
       },
       "agent": {
-        "name": "BRAVIA agent"
+        "name": "HA TV Agent"
       }
     },
     "remote": {
@@ -230,8 +230,8 @@
       "description": "Home Assistant couldn't find the Sony gRPC control service on {host}. Make sure the TV is powered on and on the same network. If mDNS and port scanning are blocked on your network, set the port manually in the integration's options (Settings > Devices & Services > Bravia TV > Configure)."
     },
     "agent_permissions": {
-      "title": "BRAVIA agent on {name} needs permissions",
-      "description": "The BRAVIA agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access, the remote's battery needs Bluetooth, and updating the agent from Home Assistant needs permission to install unknown apps. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the BRAVIA agent app on the TV and follow its status screen."
+      "title": "HA TV Agent on {name} needs permissions",
+      "description": "The HA TV Agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access, the remote's battery needs Bluetooth, and updating the agent from Home Assistant needs permission to install unknown apps. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the HA TV Agent app on the TV and follow its status screen."
     }
   },
   "services": {

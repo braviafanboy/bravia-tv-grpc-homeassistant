@@ -1,4 +1,4 @@
-"""Pure tests for the BRAVIA TV agent client module (no Home Assistant)."""
+"""Pure tests for the HA TV Agent client module (no Home Assistant)."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def test_ssl_context_pins_a_self_signed_certificate():
     from cryptography.hazmat.primitives.asymmetric import ec
 
     key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "BRAVIA agent")])
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "HA TV Agent")])
     now = datetime.datetime.now(datetime.UTC)
     cert = (
         x509.CertificateBuilder()

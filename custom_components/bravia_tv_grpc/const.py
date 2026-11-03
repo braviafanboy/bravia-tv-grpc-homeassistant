@@ -20,7 +20,7 @@ CONF_DEVICE_UNIQUE_ID = "device_unique_id"
 # fw_update.update_exist becomes true; cleared once the device info is
 # re-fetched after it clears (i.e. the update was applied).
 CONF_FW_PENDING = "fw_update_pending"
-# Bearer token of the BRAVIA TV agent app paired to this entry (the companion
+# Bearer token of the HA TV Agent app paired to this entry (the companion
 # app on the TV that reports lux, now-playing, remote battery, …). Absent until
 # an agent has been discovered and paired.
 CONF_AGENT_TOKEN = "agent_token"
