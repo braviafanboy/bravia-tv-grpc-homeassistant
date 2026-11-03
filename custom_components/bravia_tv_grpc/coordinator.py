@@ -22,6 +22,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -358,6 +359,56 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, probe_later(), name="bravia_tv_agent_probe"
         )
 
+    @callback
+    def _update_agent_permission_issue(self) -> None:
+        """Raise a repair while the agent lacks a grant; clear it once granted."""
+        issue_id = f"agent_permissions_{self._entry.entry_id}"
+        missing = agentmod.missing_permissions(self.agent_info)
+        if missing:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="agent_permissions",
+                translation_placeholders={
+                    "name": self.device_name,
+                    "missing": ", ".join(missing),
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    async def async_agent_refresh_info(self) -> None:
+        """Re-read /v1/info (permissions, pairing) and update the repair."""
+        if self.agent is None:
+            return
+        try:
+            self.agent_info = await self.agent.async_info()
+        except agentmod.AgentError:
+            return
+        self._update_agent_permission_issue()
+
+    async def async_agent_setup(self) -> None:
+        """Open the agent's permission screens on the TV: through the cloud
+        deep link when available, else by launching the app locally."""
+        if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
+            await self.async_cloud_command(
+                _AGENT_DEEP_LINK,
+                [
+                    cloud.post_command(
+                        _AGENT_DEEP_LINK,
+                        {
+                            "package_name": agentmod.AGENT_PACKAGE,
+                            "uri": agentmod.SETUP_DEEP_LINK,
+                        },
+                    )
+                ],
+            )
+        else:
+            await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
+
     def _set_agent_online(self, online: bool) -> None:
         if self._state.get(AGENT_ONLINE) == online:
             return
@@ -392,6 +443,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
                 self._apply_agent_document(await client.async_state())
                 await self._async_pin_agent_certificate()
+                await self.async_agent_refresh_info()
                 backoff = 5
                 await self._async_agent_refresh_themes()
                 async for event, payload in client.async_events():

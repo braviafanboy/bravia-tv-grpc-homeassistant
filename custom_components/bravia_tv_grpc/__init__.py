@@ -53,6 +53,7 @@ _LOGGER = logging.getLogger(__name__)
 _ISSUE_PORT_UNREACHABLE = "grpc_port_unreachable"
 
 PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
     Platform.BINARY_SENSOR,
     Platform.MEDIA_PLAYER,
     Platform.NUMBER,

@@ -352,3 +352,52 @@ async def test_unpaired_agent_forces_pairing_despite_stored_token(hass: HomeAssi
         await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "fresh")
     assert coordinator.data[AGENT_ONLINE] is True
     await coordinator.async_shutdown()
+
+
+async def test_missing_permission_raises_repair_and_clears_when_granted(
+    hass: HomeAssistant,
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+
+    def configure(f):
+        f.info = {
+            **_INFO,
+            "permissions": {"notification_access": False, "bluetooth_connect": True},
+        }
+
+    coordinator = await _start(hass, entry, fakes, configure=configure)
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    registry = ir.async_get(hass)
+    issue_id = f"agent_permissions_{entry.entry_id}"
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    fakes[0].info = {
+        **_INFO,
+        "permissions": {"notification_access": True, "bluetooth_connect": True},
+    }
+    await coordinator.async_agent_refresh_info()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    await coordinator.async_shutdown()
+
+
+async def test_agent_setup_prefers_cloud_deep_link(hass: HomeAssistant):
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    sent: list[dict] = []
+
+    async def fake_cloud(name, commands):
+        sent.append(commands[0])
+        return {}
+
+    with patch(
+        f"{COORD}.BraviaTvCoordinator.async_cloud_command", side_effect=fake_cloud
+    ):
+        coordinator = await _start(
+            hass, entry, fakes, cloud_caps={"application.deep_link": ("post",)}
+        )
+        await coordinator.async_agent_setup()
+    assert sent and sent[0]["args"]["uri"] == agentmod.SETUP_DEEP_LINK
+    coordinator.client.exec_command.assert_not_called()
+    await coordinator.async_shutdown()

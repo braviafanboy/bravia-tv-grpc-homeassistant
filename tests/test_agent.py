@@ -193,3 +193,21 @@ async def test_certificate_rejection_maps_to_mismatch_when_pinned():
     with pytest.raises(agent.AgentError) as caught:
         await loose.async_info()
     assert not isinstance(caught.value, agent.AgentFingerprintMismatch)
+
+
+def test_missing_permissions_lists_only_denied_known_grants():
+    info = {
+        "permissions": {
+            "notification_access": False,
+            "bluetooth_connect": True,
+            "usage_access": False,
+        }
+    }
+    assert agent.missing_permissions(info) == ["notification_access"]
+    assert agent.missing_permissions({}) == []
+    assert (
+        agent.missing_permissions(
+            {"permissions": {"notification_access": True, "bluetooth_connect": True}}
+        )
+        == []
+    )

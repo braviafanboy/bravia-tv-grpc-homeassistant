@@ -66,6 +66,17 @@ def pair_deep_link(token: str, name: str) -> str:
     )
 
 
+SETUP_DEEP_LINK = "braviaagent://setup"
+
+
+def missing_permissions(info: dict[str, Any]) -> list[str]:
+    """Permissions the agent reports as not granted (empty when all is well)."""
+    perms = info.get("permissions") or {}
+    return [
+        k for k in ("notification_access", "bluetooth_connect") if perms.get(k) is False
+    ]
+
+
 def parse_sse(lines: Iterable[str]) -> Iterable[tuple[str, str]]:
     """Yield ``(event, data)`` pairs from Server-Sent Events text lines.
 

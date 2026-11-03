@@ -175,24 +175,48 @@ gains:
 | `select` Living Decor theme | The Living Decor app's theme list | Disabled by default; needs the cloud `select_media` capability |
 | `sensor` Wi-Fi signal / link speed | WifiManager | Diagnostic, disabled by default |
 
+### Installing the agent
+
+1. **Put the APK on the TV.** Download `bravia-agent.apk` from the agent's
+   [releases](https://github.com/braviafanboy/bravia-tv-agent/releases) and
+   install it with any sideloading method: `adb install bravia-agent.apk`, a
+   downloader app on the TV pointed at the release URL, or a USB stick with
+   the TV's file manager. Android asks you to confirm the install on screen;
+   that step cannot be done for you.
+2. **That is it for the sensors.** Within five minutes the integration finds
+   the agent on the TV's address, launches it once (nothing appears on
+   screen), pairs with it over the Sony cloud, or through a 60-second pairing
+   window when the cloud is unreachable, and the illuminance, temperature,
+   panel, Wi-Fi and settings entities appear. Pairing is remembered on both
+   sides; a reinstalled agent is re-paired automatically.
+3. **Two optional permissions** unlock the rest. Now-playing needs
+   *Notification access* and the remote's battery needs *Bluetooth*; Android
+   only grants these through its own prompts on the TV. Press the **Agent
+   setup** button on the TV's device page in Home Assistant, or open the
+   BRAVIA agent app from the TV's launcher, and accept the two prompts with
+   the remote. A repair notice reminds you while either is missing.
+   With adb, the same two grants are:
+
+   ```
+   adb shell cmd notification allow_listener com.braviafanboy.braviaagent/.MediaListenerService
+   adb shell pm grant com.braviafanboy.braviaagent android.permission.BLUETOOTH_CONNECT
+   ```
+
 How it works:
 
-1. Install the agent on the TV (sideload the APK), open it once and grant
-   *Notification access* (for now-playing) and *Bluetooth* (for the remote's
-   battery) when it asks.
-2. The integration probes the TV's address on port 8585 at startup. If the
-   agent answers, it pairs automatically: it delivers a token through the
-   Sony cloud deep link when the cloud is reachable, otherwise it launches
-   the agent on the TV, which opens a 60-second pairing window, and pairs
-   through it. The token is stored in the config entry; the agent accepts
-   nothing else afterwards.
-3. The link is HTTPS. The agent uses a self-signed certificate it generates
-   on first run; the integration learns it during pairing and from then on
-   trusts exactly that certificate, so nothing else on the network can pose
-   as the agent and the token never travels in clear. A reinstalled agent has
-   a new certificate and a new pairing follows automatically.
-4. State arrives over the agent's event stream and is unavailable whenever
-   the TV is off, since the TV leaves the LAN in standby.
+- The integration probes the TV's address on port 8585 at startup and every
+  five minutes until an agent answers.
+- Pairing hands the agent a bearer token, by Sony cloud deep link when the
+  cloud is reachable, else by launching the agent so it opens a pairing
+  window. The token is stored in the config entry; the agent accepts nothing
+  else afterwards.
+- The link is HTTPS. The agent generates a self-signed certificate on first
+  run; the integration learns it during pairing and from then on trusts
+  exactly that certificate, so nothing else on the network can pose as the
+  agent and the token never travels in clear. A reinstalled agent has a new
+  certificate and a new pairing follows automatically.
+- State arrives over the agent's event stream and is unavailable whenever
+  the TV is off, since the TV leaves the LAN in standby.
 
 Diagnostics include the agent's version and granted permissions. If you
 reinstall the agent or clear its pairing (hold LEFT on its status screen), the

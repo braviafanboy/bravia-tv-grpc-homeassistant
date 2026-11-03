@@ -210,12 +210,21 @@
       "remote": {
         "name": "Remote"
       }
+    },
+    "button": {
+      "agent_setup": {
+        "name": "Agent setup"
+      }
     }
   },
   "issues": {
     "grpc_port_unreachable": {
       "title": "Bravia TV not reachable",
       "description": "Home Assistant couldn't find the Sony gRPC control service on {host}. Make sure the TV is powered on and on the same network. If mDNS and port scanning are blocked on your network, set the port manually in the integration's options (Settings > Devices & Services > Bravia TV > Configure)."
+    },
+    "agent_permissions": {
+      "title": "BRAVIA agent on {name} needs permissions",
+      "description": "The BRAVIA agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access and the remote's battery needs Bluetooth. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the BRAVIA agent app on the TV and follow its status screen."
     }
   },
   "services": {
