@@ -190,13 +190,11 @@ def _hdr_type(value: Any) -> Any:
 
 
 def _picture_set_changed(path: str, previous: Any, value: Any) -> bool:
-    """Whether a gRPC change switches the TV to another set of picture values:
-    picture mode, input or content mode, or the video's dynamic range (SDR →
-    HDR10 …); resolution or frame-rate changes alone do not."""
+    """Whether a gRPC change of picture mode, input or content mode switches
+    the TV to another set of picture values (the video's dynamic range is
+    tracked separately, see ``_hdr_changed``)."""
     if path in _PICTURE_TRIGGERS:
         return previous is not None and previous != value
-    if path == _SIGNAL_VIDEO:
-        return previous is not None and _hdr_type(previous) != _hdr_type(value)
     return False
 
 
@@ -256,6 +254,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rest_psk_sent = False
         self._cancel_picture_refresh: Any = None
         self._rest_unavailable_since: datetime | None = None
+        # Dynamic range class of the video signal (hdr_type, "sdr" when there
+        # is no video): the TV keeps separate picture values per class.
+        self._last_hdr_type: str | None = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -599,6 +600,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_key="agent_offline",
                 translation_placeholders={"name": self.device_name},
             ) from err
+
+    def _hdr_changed(self, value: Any) -> bool:
+        """True when the video's dynamic range class changes (SDR ↔ HDR10 ↔
+        Dolby Vision …). No video signal counts as SDR: the TV uses its SDR
+        picture values whenever nothing HDR is playing (verified live: HDR10 →
+        no signal switched gamma back to the SDR value). So HDR → none and
+        none → HDR count, SDR → none → SDR does not, and resolution or
+        frame-rate changes alone never do."""
+        cls = str(_hdr_type(value) or "sdr").lower()
+        changed = cls != self._last_hdr_type
+        self._last_hdr_type = cls
+        return changed
 
     @callback
     def _schedule_picture_refresh(self) -> None:
@@ -1341,7 +1354,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         previous = self._state.get(path)
         self._state[path] = value
-        if _picture_set_changed(path, previous, value):
+        if _picture_set_changed(path, previous, value) or (
+            path == _SIGNAL_VIDEO and self._hdr_changed(value)
+        ):
             self._schedule_picture_refresh()
         if path == "power" and not value and cloud_path("sleep_timer") in self._state:
             # The TV clears its sleep timer whenever it powers off (see Sony's

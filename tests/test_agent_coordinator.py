@@ -668,19 +668,26 @@ async def test_picture_refresh_on_grpc_picture_set_changes(hass: HomeAssistant):
     coordinator._apply_delta("system_setting.input", "x")  # first value: no trigger
     advance()
     await _until(lambda: fake.refreshes == 1)
-    sdr = [{"hdr_type": 0, "width": 1920}]
-    coordinator._state["playback_control.signal_info.video"] = sdr
-    coordinator._apply_delta(
-        "playback_control.signal_info.video", [{"hdr_type": 0, "width": 3840}]
-    )
-    advance()
-    await hass.async_block_till_done()
-    assert fake.refreshes == 1  # resolution only: same picture set
-    coordinator._apply_delta(
-        "playback_control.signal_info.video", [{"hdr_type": 1, "width": 3840}]
-    )
+    video = "playback_control.signal_info.video"
+    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 1920}])  # first
     advance()
     await _until(lambda: fake.refreshes == 2)
+    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 3840}])
+    coordinator._apply_delta(video, None)  # no video: SDR values on the TV
+    coordinator._apply_delta(video, [{"hdr_type": "sdr", "width": 1280}])
+    advance()
+    await hass.async_block_till_done()
+    assert fake.refreshes == 2  # resolution / no video / SDR: same picture set
+    coordinator._apply_delta(video, None)
+    coordinator._apply_delta(video, [{"hdr_type": "hdr10", "width": 3840}])
+    advance()
+    await _until(lambda: fake.refreshes == 3)
+    coordinator._apply_delta(video, None)  # HDR stopped: TV back on SDR values
+    advance()
+    await _until(lambda: fake.refreshes == 4)
+    coordinator._apply_delta(video, [{"hdr_type": "hdr10", "width": 3840}])
+    advance()
+    await _until(lambda: fake.refreshes == 5)
     await coordinator.async_shutdown()
 
 
