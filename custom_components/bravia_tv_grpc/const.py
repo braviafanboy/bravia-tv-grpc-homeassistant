@@ -33,6 +33,16 @@ CONF_AGENT_CERT = "agent_cert"
 # Name the agent shows for the paired client.
 AGENT_CLIENT_NAME = "Home Assistant"
 
+# Picture settings over the TV's REST IP control, relayed by the agent.
+# Write access follows the key: empty = read-only sensors, set = controls.
+CONF_REST_PSK = "rest_psk"
+CONF_PICTURE_POLL_S = "picture_poll_s"
+DEFAULT_PICTURE_POLL_S = 60
+MIN_PICTURE_POLL_S = 10
+MAX_PICTURE_POLL_S = 3600
+CONF_PICTURE_EVENT_REFRESH = "picture_event_refresh"
+DEFAULT_PICTURE_EVENT_REFRESH = True
+
 # gRPC service identity (verified on the K-65XR8M2). BRAVIA TVs serve this on a
 # DYNAMIC port that changes across reboots, so it is discovered at runtime via
 # mDNS or a port scan — see grpc_discovery.py.

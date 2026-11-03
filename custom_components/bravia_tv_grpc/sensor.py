@@ -26,9 +26,15 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvAgentEntity, BraviaTvEntity
+from .entity import (
+    BraviaTvAgentEntity,
+    BraviaTvEntity,
+    BraviaTvPictureEntity,
+    async_add_picture_entities,
+)
 from .util import parse_json_value, source_label
 
 _SIGNAL_VIDEO = "playback_control.signal_info.video"
@@ -182,7 +188,17 @@ async def async_setup_entry(
             BraviaTvAgentSensor(coordinator, key, spec)
             for key, spec in _AGENT_SENSORS.items()
         )
+        if not coordinator.rest_writable:
+            entities.append(BraviaTvPowerSavingSensor(coordinator))
     async_add_entities(entities)
+    if not coordinator.rest_writable:
+        # Without the IP-control key the picture settings are read-only.
+        async_add_picture_entities(
+            coordinator,
+            entry,
+            async_add_entities,
+            lambda c, target, kind: BraviaTvPictureSensor(c, target, kind),
+        )
 
 
 class BraviaTvVideoSignalSensor(BraviaTvEntity, SensorEntity):
@@ -530,3 +546,48 @@ class BraviaTvAgentSensor(BraviaTvAgentEntity, SensorEntity):
     def native_value(self) -> float | int | None:
         value = self.agent_value(*self._keys)
         return value if isinstance(value, int | float) else None
+
+
+class BraviaTvPictureSensor(BraviaTvPictureEntity, SensorEntity):
+    """A picture setting, read-only (no IP-control key in the options)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self, coordinator: BraviaTvCoordinator, target: str, kind: str | None
+    ) -> None:
+        super().__init__(coordinator, target)
+        self._kind = kind
+
+    @property
+    def native_value(self) -> str | float | None:
+        if self._kind == picture.KIND_NUMBER:
+            number = picture.numeric(self.raw_value)
+            if number is not None and number.is_integer():
+                return int(number)
+            return number
+        return self.raw_value
+
+
+class BraviaTvPowerSavingSensor(BraviaTvAgentEntity, SensorEntity):
+    """The TV's power-saving mode, read-only (no IP-control key)."""
+
+    _attr_translation_key = "power_saving"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["off", "low", "high"]
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "power_saving", "power_saving")
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.agent_value("rest", "available") is True
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        value = self.coordinator.agent_value("power_saving")
+        return value if value in self._attr_options else None

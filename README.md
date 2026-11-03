@@ -178,6 +178,7 @@ gains:
 | `media_player` now playing | The foreground app's media session | Title, artist, album, position, duration, artwork and playing / paused state |
 | `select` Living Decor theme | The Living Decor app's theme list | Disabled by default; needs the cloud `select_media` capability |
 | `sensor` Wi-Fi signal / link speed | WifiManager | Diagnostic, disabled by default |
+| Picture settings (66) and power saving | The TV's REST IP control, called by the agent on the TV | Read-only sensors, or controls with the IP control key; see *Picture settings* below |
 
 ### Installing the agent
 
@@ -251,6 +252,46 @@ How it works:
 Diagnostics include the agent's version and granted permissions. If you
 reinstall the agent or clear its pairing (hold LEFT on its status screen), the
 integration re-pairs on its own the next time the TV is on.
+
+### Picture settings
+
+With the agent installed, every picture setting the TV's own menu offers
+appears in Home Assistant: contrast, color, color temperature, gamma, the full
+white balance and color-management sets, local dimming, peak luminance, HDR
+mode and tone mapping, Motionflow, Reality Creation, noise reduction, the HDMI
+signal settings, and the Ambient Optimization switches (master, auto luminance
+level, auto tone curve, auto white balance), plus the power-saving mode. On a
+BRAVIA 8 II that is 66 settings. Brightness and picture mode keep their
+existing gRPC entities.
+
+They come from the TV's REST IP control, which the agent calls on the TV
+itself, so nothing extra is exposed on your network.
+
+- **Read-only by default.** Without a key the settings are sensors showing the
+  TV's current values.
+- **To change them from Home Assistant**, set a key on the TV: Settings →
+  Network → Home network → IP control → Authentication → *Normal and
+  Pre-Shared Key*, then *Pre-Shared Key*. Enter the same key in the
+  integration's options (**IP control pre-shared key**). The settings become
+  numbers, switches and selects, and power saving becomes a select. Clearing
+  the key turns them back into sensors. The key is stored in the config entry
+  next to the gRPC credentials and handed to the agent, which keeps it on the
+  TV. (Sony's PIN-based "Normal" authentication only works on Japanese
+  models, so the pre-shared key is the way in elsewhere.)
+- **Everything is enabled.** Try the settings and disable the entities you do
+  not use: fewer enabled settings means less polling at short intervals.
+- **Refresh.** Nothing on the TV announces a picture-setting change, so the
+  agent re-reads them while the TV is on. Two options control this:
+  **Picture settings poll interval** (default 60 s; shorter intervals load the
+  TV more) and **Refresh picture settings on TV events** (default on: re-read
+  as soon as gRPC reports a picture mode, input, content mode or HDR change,
+  since the TV keeps separate values for each).
+- **Availability follows the TV.** A setting is unavailable while the TV
+  offers it no control: the HDMI signal settings and wide mode on an app, the
+  Ambient Optimization sub-switches while the master switch is off, HDR tone
+  mapping on SDR content.
+- **Repairs** tell you when the TV rejects the key, or when IP control stays
+  unreachable (switched off on the TV).
 
 ## Soundbar control is out of scope
 

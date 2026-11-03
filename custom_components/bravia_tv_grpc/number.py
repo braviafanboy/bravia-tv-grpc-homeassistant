@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from homeassistant.components.number import NumberEntity
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvEntity, BraviaTvPictureEntity, async_add_picture_entities
 
 # gRPC int path -> (friendly name, icon). Range comes from the capability meta.
 #
@@ -81,6 +83,17 @@ async def async_setup_entry(
         for path, (key, icon) in _NUMBERS.items()
         if path in caps and caps[path].type == "int"
     )
+    if coordinator.rest_writable:
+        async_add_picture_entities(
+            coordinator,
+            entry,
+            async_add_entities,
+            lambda c, target, kind: (
+                BraviaTvPictureNumber(c, target)
+                if kind == picture.KIND_NUMBER
+                else None
+            ),
+        )
 
 
 class BraviaTvNumber(BraviaTvEntity, NumberEntity):
@@ -128,3 +141,32 @@ class BraviaTvNumber(BraviaTvEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self._async_set(int(value))
+
+
+class BraviaTvPictureNumber(BraviaTvPictureEntity, NumberEntity):
+    """A numeric picture setting (contrast, color, white balance gains, …),
+    range from the TV's candidates."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.SLIDER
+
+    @property
+    def native_min_value(self) -> float:
+        return picture.number_range(self.target, self.info)[0]
+
+    @property
+    def native_max_value(self) -> float:
+        return picture.number_range(self.target, self.info)[1]
+
+    @property
+    def native_step(self) -> float:
+        return picture.number_range(self.target, self.info)[2]
+
+    @property
+    def native_value(self) -> float | None:
+        return picture.numeric(self.raw_value)
+
+    async def async_set_native_value(self, value: float) -> None:
+        step = self.native_step
+        text = str(int(round(value))) if float(step).is_integer() else str(value)
+        await self.async_write(text)

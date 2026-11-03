@@ -17,6 +17,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -36,7 +37,7 @@ from .const import (
     CONF_SW_VERSION,
     DOMAIN,
 )
-from .coordinator import BraviaTvCoordinator
+from .coordinator import BraviaTvCoordinator, rest_options
 from .grpc import credentials as cred
 from .grpc.credentials import GrpcCredentialsError, GrpcCredentialsRefreshError
 from .grpc_discovery import (
@@ -135,6 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     coordinator.applied_manual_port = manual_port
     await _ensure_device_info(hass, entry, creds, device_id, coordinator)
+    _remove_other_picture_entities(hass, entry, coordinator.rest_writable)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -226,6 +228,27 @@ async def _fetch_device_hardware(
     return cred.device_hardware_info(device) if device else None
 
 
+def _remove_other_picture_entities(
+    hass: HomeAssistant, entry: ConfigEntry, writable: bool
+) -> None:
+    """Picture settings are sensors without the IP-control key and controls
+    with it; drop the other kind from the registry so none are orphaned."""
+    registry = er.async_get(hass)
+    root = entry.unique_id or entry.entry_id
+    prefix = f"{root}_agent_picture_"
+    stale_domains = {"sensor"} if writable else {"number", "select", "switch"}
+    for reg in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg.domain in stale_domains and reg.unique_id.startswith(prefix):
+            registry.async_remove(reg.entity_id)
+    # Power saving: a sensor without the key, a select with it.
+    ps_domain = "sensor" if writable else "select"
+    ps_id = registry.async_get_entity_id(
+        ps_domain, DOMAIN, f"{root}_agent_power_saving"
+    )
+    if ps_id:
+        registry.async_remove(ps_id)
+
+
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload only when the manual-port option changed; ignore runtime data
     writes (e.g. the firmware-pending flag)."""
@@ -234,7 +257,17 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     if coordinator is None or new_manual != coordinator.applied_manual_port:
         await hass.config_entries.async_reload(entry.entry_id)
         return
-    # Other options (the agent release manifest URL) take effect in place.
+    # The IP-control key decides between read-only picture sensors and
+    # writable controls: a change rebuilds the entities.
+    new_rest = rest_options(entry.options)
+    if new_rest[0] != coordinator.applied_rest_options[0]:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    # Other options (refresh settings, the agent release manifest URL) take
+    # effect in place.
+    if new_rest != coordinator.applied_rest_options:
+        coordinator.applied_rest_options = new_rest
+        await coordinator.async_agent_resync_rest()
     if coordinator.agent is not None:
         await coordinator.async_check_agent_update()
 

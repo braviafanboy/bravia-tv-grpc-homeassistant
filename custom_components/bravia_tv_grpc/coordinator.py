@@ -22,6 +22,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
@@ -38,8 +39,15 @@ from .const import (
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
+    CONF_PICTURE_EVENT_REFRESH,
+    CONF_PICTURE_POLL_S,
+    CONF_REST_PSK,
     DEFAULT_AGENT_MANIFEST_URL,
+    DEFAULT_PICTURE_EVENT_REFRESH,
+    DEFAULT_PICTURE_POLL_S,
     DOMAIN,
+    MAX_PICTURE_POLL_S,
+    MIN_PICTURE_POLL_S,
 )
 from .grpc import agent as agentmod
 from .grpc import cloud_commands as cloud
@@ -140,6 +148,18 @@ _AGENT_BACKOFF_MAX = 60
 _KEY_RENEWAL_LEAD = timedelta(hours=1)
 _KEY_RENEWAL_RETRY = timedelta(minutes=10)
 _KEY_RENEWAL_FALLBACK = timedelta(hours=23)
+# gRPC paths whose change switches the TV to another set of picture values
+# (they are stored per picture mode, input, content mode and SDR/HDR), so the
+# agent re-reads its REST picture settings when one of them changes.
+_PICTURE_TRIGGERS = (
+    "display_setting.picture_mode",
+    "system_setting.input",
+    "display_and_sound_setting.content_mode",
+)
+_SIGNAL_VIDEO = "playback_control.signal_info.video"
+_PICTURE_REFRESH_DEBOUNCE = 1.0
+# IP control can lag the panel after wake; only report it unreachable after this.
+_REST_UNAVAILABLE_GRACE = timedelta(minutes=3)
 # How often to look for an agent that was not there at startup (installed or
 # first opened later), so it is picked up without a reload.
 _AGENT_PROBE_INTERVAL = 300
@@ -148,6 +168,36 @@ _AGENT_PROBE_INTERVAL = 300
 def agent_path(block: str) -> str:
     """Coordinator data key of an agent state block."""
     return f"agent.{block}"
+
+
+def rest_options(options: Any) -> tuple[str, int, bool]:
+    """(IP-control key, poll interval in s, refresh on TV events) from options."""
+    psk = str(options.get(CONF_REST_PSK) or "").strip()
+    try:
+        poll_s = int(options.get(CONF_PICTURE_POLL_S) or DEFAULT_PICTURE_POLL_S)
+    except (TypeError, ValueError):
+        poll_s = DEFAULT_PICTURE_POLL_S
+    poll_s = max(MIN_PICTURE_POLL_S, min(MAX_PICTURE_POLL_S, poll_s))
+    event_refresh = bool(
+        options.get(CONF_PICTURE_EVENT_REFRESH, DEFAULT_PICTURE_EVENT_REFRESH)
+    )
+    return psk, poll_s, event_refresh
+
+
+def _hdr_type(value: Any) -> Any:
+    entry = value[0] if isinstance(value, list) and value else value
+    return entry.get("hdr_type") if isinstance(entry, dict) else None
+
+
+def _picture_set_changed(path: str, previous: Any, value: Any) -> bool:
+    """Whether a gRPC change switches the TV to another set of picture values:
+    picture mode, input or content mode, or the video's dynamic range (SDR →
+    HDR10 …); resolution or frame-rate changes alone do not."""
+    if path in _PICTURE_TRIGGERS:
+        return previous is not None and previous != value
+    if path == _SIGNAL_VIDEO:
+        return previous is not None and _hdr_type(previous) != _hdr_type(value)
+    return False
 
 
 class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -198,6 +248,14 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Latest agent release per the manifest (version/url/sha256/notes).
         self.agent_latest: dict[str, Any] | None = None
         self._cancel_agent_manifest: Any = None
+        # Picture settings over REST (relayed by the agent): the options this
+        # coordinator was built with (a key change reloads the entry), whether
+        # the key was handed to the agent yet in this lifetime, the debounced
+        # gRPC-triggered refresh, and since when IP control is unreachable.
+        self.applied_rest_options = rest_options(entry.options)
+        self._rest_psk_sent = False
+        self._cancel_picture_refresh: Any = None
+        self._rest_unavailable_since: datetime | None = None
 
     async def async_start(self) -> None:
         """Connect, fetch schema, seed initial state, and start the push stream."""
@@ -450,6 +508,168 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
 
+    # -- picture settings over REST (relayed by the agent) -------------------
+    @property
+    def rest_writable(self) -> bool:
+        """Picture settings are writable when the IP-control key is set."""
+        return bool(self.applied_rest_options[0])
+
+    def picture_watch(self) -> list[str]:
+        """Targets with an enabled picture entity: what the agent polls at
+        short intervals."""
+        registry = er.async_get(self.hass)
+        root = self._entry.unique_id or self._entry.entry_id
+        prefix = f"{root}_agent_picture_"
+        return sorted(
+            e.unique_id[len(prefix) :]
+            for e in er.async_entries_for_config_entry(registry, self._entry.entry_id)
+            if e.unique_id.startswith(prefix) and e.disabled_by is None
+        )
+
+    async def _async_agent_sync_rest(self) -> None:
+        """Bring the agent in line with the options: refresh settings and the
+        IP-control key. Called on every agent connection; never raises."""
+        if self.agent is None:
+            return
+        psk, poll_s, event_refresh = rest_options(self._entry.options)
+        try:
+            await self.agent.async_picture_config(
+                poll_s, event_refresh, self.picture_watch()
+            )
+            auth = self.agent_value("rest", "auth")
+            if psk and (not self._rest_psk_sent or auth != "psk"):
+                accepted = await self.agent.async_set_psk(psk)
+                self._rest_psk_sent = True
+                if not accepted:
+                    _LOGGER.warning(
+                        "the TV rejected the IP control key for %s", self.device_name
+                    )
+            elif not psk and auth not in (None, "none"):
+                await self.agent.async_forget_rest_auth()
+        except agentmod.AgentUnauthorized:
+            raise
+        except agentmod.AgentError as err:
+            # Older agents (no REST endpoints) answer 404: nothing to sync.
+            _LOGGER.debug("agent REST sync: %s", err)
+        except Exception:  # noqa: BLE001 - never let the sync end the stream
+            _LOGGER.exception("agent REST sync failed")
+
+    async def async_agent_resync_rest(self) -> None:
+        """Re-send the refresh settings (options changed in place)."""
+        if self.agent is not None and self.agent_online:
+            try:
+                await self._async_agent_sync_rest()
+            except agentmod.AgentError as err:
+                _LOGGER.debug("agent REST resync: %s", err)
+
+    async def async_set_picture(self, target: str, value: str) -> None:
+        """Write a picture target through the agent; raises a translated error."""
+        await self._async_rest_write(
+            self._require_agent().async_set_picture(target, value)
+        )
+
+    async def async_set_power_saving(self, mode: str) -> None:
+        await self._async_rest_write(self._require_agent().async_set_power_saving(mode))
+
+    def _require_agent(self) -> agentmod.AgentClient:
+        if self.agent is None or not self.agent_online:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            )
+        return self.agent
+
+    async def _async_rest_write(self, request: Any) -> None:
+        try:
+            await request
+        except agentmod.AgentRequestError as err:
+            key = {
+                "rest_unauthorized": "rest_key_rejected",
+                "rest_unavailable": "rest_unavailable",
+            }.get(err.code, "picture_write_refused")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key=key,
+                translation_placeholders={"name": self.device_name, "code": err.code},
+            ) from err
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+
+    @callback
+    def _schedule_picture_refresh(self) -> None:
+        """Debounced re-read after a picture-set change seen on gRPC."""
+        if not self.applied_rest_options[2] or self.agent is None:
+            return
+        if self._cancel_picture_refresh is not None:
+            self._cancel_picture_refresh()
+
+        @callback
+        def _fire(_now: Any) -> None:
+            self._cancel_picture_refresh = None
+            if self.agent is not None and self.agent_online:
+                self.hass.async_create_task(
+                    self._async_picture_refresh(), name="bravia_tv_picture_refresh"
+                )
+
+        self._cancel_picture_refresh = async_call_later(
+            self.hass, _PICTURE_REFRESH_DEBOUNCE, _fire
+        )
+
+    async def _async_picture_refresh(self) -> None:
+        try:
+            if self.agent is not None:
+                await self.agent.async_picture_refresh()
+        except agentmod.AgentError as err:
+            _LOGGER.debug("agent picture refresh: %s", err)
+
+    @callback
+    def _update_rest_issues(self) -> None:
+        """Repairs for the picture channel: a key the TV refuses, and IP
+        control that stays unreachable."""
+        rest = self.agent_value("rest")
+        if not isinstance(rest, dict):
+            return
+        rejected_id = f"rest_key_rejected_{self._entry.entry_id}"
+        if (
+            self.applied_rest_options[0]
+            and rest.get("auth") == "psk"
+            and rest.get("write_authorized") is False
+        ):
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                rejected_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="rest_key_rejected",
+                translation_placeholders={"name": self.device_name},
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, rejected_id)
+        unavailable_id = f"rest_unavailable_{self._entry.entry_id}"
+        if rest.get("available") is False:
+            now = dt_util.utcnow()
+            if self._rest_unavailable_since is None:
+                self._rest_unavailable_since = now
+            if now - self._rest_unavailable_since >= _REST_UNAVAILABLE_GRACE:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    unavailable_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="rest_unavailable",
+                    translation_placeholders={"name": self.device_name},
+                )
+        else:
+            self._rest_unavailable_since = None
+            ir.async_delete_issue(self.hass, DOMAIN, unavailable_id)
+
     async def async_agent_setup(self) -> None:
         """Open the agent's permission screens on the TV: through the cloud
         deep link when available, else by launching the app locally. Does
@@ -493,6 +713,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._state[agent_path(block)] = value
         self._state[agent_path("updated_at")] = dt_util.utcnow()
         self._state[AGENT_ONLINE] = True
+        self._update_rest_issues()
         self.async_set_updated_data(dict(self._state))
 
     async def _async_agent_loop(self) -> None:
@@ -513,6 +734,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._apply_agent_document(await client.async_state())
                 await self._async_pin_agent_certificate()
                 await self.async_agent_refresh_info()
+                await self._async_agent_sync_rest()
                 backoff = 5
                 await self._async_agent_refresh_themes()
                 async for event, payload in client.async_events():
@@ -1117,7 +1339,10 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 name="bravia_tv_app_list_refresh",
             )
             return
+        previous = self._state.get(path)
         self._state[path] = value
+        if _picture_set_changed(path, previous, value):
+            self._schedule_picture_refresh()
         if path == "power" and not value and cloud_path("sleep_timer") in self._state:
             # The TV clears its sleep timer whenever it powers off (see Sony's
             # help guide); there is no push for cloud-only states, so mirror it.
@@ -1170,6 +1395,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._cancel_picture_refresh is not None:
+            self._cancel_picture_refresh()
+            self._cancel_picture_refresh = None
         if self._cancel_agent_manifest is not None:
             self._cancel_agent_manifest()
             self._cancel_agent_manifest = None

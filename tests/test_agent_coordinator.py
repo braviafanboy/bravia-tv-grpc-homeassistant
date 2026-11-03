@@ -84,12 +84,13 @@ def _client() -> MagicMock:
     return client
 
 
-def _entry(hass: HomeAssistant, **extra):
+def _entry(hass: HomeAssistant, options=None, **extra):
     from pytest_homeassistant_custom_component.common import MockConfigEntry
 
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="dev",
+        options=options or {},
         data={
             "host": "tv.local",
             CONF_GRPC_KEYS: _KEYS,
@@ -121,6 +122,14 @@ class FakeAgent:
         self.pair_tokens: list[str] = []
         self.reject_token: str | None = None
         self.stream_started = asyncio.Event()
+        self.picture_configs: list[tuple] = []
+        self.psk_calls: list[str] = []
+        self.psk_accept = True
+        self.forget_calls = 0
+        self.picture_writes: list[tuple[str, str]] = []
+        self.power_writes: list[str] = []
+        self.refreshes = 0
+        self.write_error: Exception | None = None
 
     @property
     def base_url(self):
@@ -180,6 +189,28 @@ class FakeAgent:
 
     async def async_stage_update(self, url, sha256, version):
         self.staged = (url, sha256, version)
+
+    async def async_picture_config(self, poll_s, event_refresh, watch):
+        self.picture_configs.append((poll_s, event_refresh, list(watch)))
+        return {}
+
+    async def async_set_psk(self, psk):
+        self.psk_calls.append(psk)
+        return self.psk_accept
+
+    async def async_forget_rest_auth(self):
+        self.forget_calls += 1
+
+    async def async_set_picture(self, target, value):
+        if self.write_error:
+            raise self.write_error
+        self.picture_writes.append((target, value))
+
+    async def async_set_power_saving(self, mode):
+        self.power_writes.append(mode)
+
+    async def async_picture_refresh(self):
+        self.refreshes += 1
 
 
 async def _until(predicate, timeout=5.0):
@@ -527,3 +558,273 @@ async def test_agent_update_entity_flow(hass: HomeAssistant):
     assert fakes[0].staged == ("https://x/bravia-agent.apk", "ab" * 32, "9.9.9")
     assert sent and sent[0]["args"]["uri"] == agentmod.UPDATE_DEEP_LINK
     await coordinator.async_shutdown()
+
+
+# -- picture settings over REST (R3) ----------------------------------------
+
+_PICTURE = {
+    "targets": {
+        "brightness": {
+            "value": "50",
+            "available": True,
+            "candidates": [{"min": 0, "max": 50, "step": 1}],
+        },
+        "pictureMode": {
+            "value": "custom",
+            "available": True,
+            "candidates": [{"value": "custom"}],
+        },
+        "contrast": {
+            "value": "90",
+            "available": True,
+            "candidates": [{"min": 0, "max": 100, "step": 1}],
+        },
+        "sensorAutoAdjustment": {
+            "value": "off",
+            "available": True,
+            "candidates": [{"value": "on"}, {"value": "off"}],
+        },
+        "autoLuminanceLevel": {
+            "value": "off",
+            "available": False,
+            "candidates": [{"value": "on"}, {"value": "off"}],
+        },
+        "colorTemperature": {
+            "value": "expert2",
+            "available": True,
+            "candidates": [{"value": "cool"}, {"value": "expert2"}],
+        },
+        "wideMode": {"value": "", "available": False, "candidates": []},
+    }
+}
+_REST_OK = {
+    "available": True,
+    "scheme": "http",
+    "auth": "none",
+    "write_authorized": False,
+}
+
+
+def _with_picture(rest=None):
+    def configure(f):
+        f.state_doc = {
+            **_DOC,
+            "rest": rest or _REST_OK,
+            "picture": _PICTURE,
+            "power_saving": "off",
+        }
+
+    return configure
+
+
+async def test_rest_sync_sends_settings_and_key(hass: HomeAssistant):
+    entry = _entry(
+        hass,
+        options={
+            "rest_psk": "k3y",
+            "picture_poll_s": 30,
+            "picture_event_refresh": False,
+        },
+        **{CONF_AGENT_TOKEN: "tok"},
+    )
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_with_picture())
+    await _until(lambda: fakes[0].picture_configs and fakes[0].psk_calls)
+    assert fakes[0].picture_configs[0] == (30, False, [])
+    assert fakes[0].psk_calls == ["k3y"]
+    assert coordinator.rest_writable
+    await coordinator.async_shutdown()
+
+
+async def test_rest_sync_forgets_key_when_option_cleared(hass: HomeAssistant):
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(
+        hass, entry, fakes, configure=_with_picture({**_REST_OK, "auth": "psk"})
+    )
+    await _until(lambda: fakes[0].forget_calls == 1)
+    assert not fakes[0].psk_calls
+    assert not coordinator.rest_writable
+    await coordinator.async_shutdown()
+
+
+async def test_picture_refresh_on_grpc_picture_set_changes(hass: HomeAssistant):
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_with_picture())
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    fake = fakes[0]
+
+    def advance():
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+
+    coordinator._state["display_setting.picture_mode"] = "custom"
+    coordinator._apply_delta("display_setting.picture_mode", "cinema")
+    coordinator._apply_delta("system_setting.input", "x")  # first value: no trigger
+    advance()
+    await _until(lambda: fake.refreshes == 1)
+    sdr = [{"hdr_type": 0, "width": 1920}]
+    coordinator._state["playback_control.signal_info.video"] = sdr
+    coordinator._apply_delta(
+        "playback_control.signal_info.video", [{"hdr_type": 0, "width": 3840}]
+    )
+    advance()
+    await hass.async_block_till_done()
+    assert fake.refreshes == 1  # resolution only: same picture set
+    coordinator._apply_delta(
+        "playback_control.signal_info.video", [{"hdr_type": 1, "width": 3840}]
+    )
+    advance()
+    await _until(lambda: fake.refreshes == 2)
+    await coordinator.async_shutdown()
+
+
+async def test_picture_refresh_off_when_option_disabled(hass: HomeAssistant):
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    entry = _entry(
+        hass, options={"picture_event_refresh": False}, **{CONF_AGENT_TOKEN: "tok"}
+    )
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_with_picture())
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    coordinator._state["display_setting.picture_mode"] = "custom"
+    coordinator._apply_delta("display_setting.picture_mode", "cinema")
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+    await hass.async_block_till_done()
+    assert fakes[0].refreshes == 0
+    await coordinator.async_shutdown()
+
+
+async def test_picture_write_errors_are_translated(hass: HomeAssistant):
+    from homeassistant.exceptions import HomeAssistantError
+
+    entry = _entry(hass, options={"rest_psk": "k"}, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_with_picture())
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    await coordinator.async_set_picture("contrast", "91")
+    assert fakes[0].picture_writes == [("contrast", "91")]
+    for code, key in (
+        ("rest_unauthorized", "rest_key_rejected"),
+        ("rest_unavailable", "rest_unavailable"),
+        ("invalid_value", "picture_write_refused"),
+    ):
+        fakes[0].write_error = agentmod.AgentRequestError(code, 403)
+        with pytest.raises(HomeAssistantError) as err:
+            await coordinator.async_set_picture("contrast", "91")
+        assert err.value.translation_key == key
+    await coordinator.async_shutdown()
+
+
+async def test_rejected_key_raises_repair(hass: HomeAssistant):
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _entry(hass, options={"rest_psk": "wrong"}, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(
+        hass,
+        entry,
+        fakes,
+        configure=_with_picture({**_REST_OK, "auth": "psk", "write_authorized": False}),
+    )
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    issue_id = f"rest_key_rejected_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    fakes[0].events.put_nowait(
+        (
+            "state",
+            {
+                **fakes[0].state_doc,
+                "rest": {**_REST_OK, "auth": "psk", "write_authorized": True},
+            },
+        )
+    )
+    await _until(lambda: ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None)
+    await coordinator.async_shutdown()
+
+
+async def test_picture_entities_and_writes(hass: HomeAssistant):
+    from custom_components.bravia_tv_grpc.entity import async_add_picture_entities
+    from custom_components.bravia_tv_grpc.number import BraviaTvPictureNumber
+    from custom_components.bravia_tv_grpc.select import BraviaTvPictureSelect
+    from custom_components.bravia_tv_grpc.sensor import BraviaTvPictureSensor
+    from custom_components.bravia_tv_grpc.switch import BraviaTvPictureSwitch
+
+    entry = _entry(hass, options={"rest_psk": "k"}, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_with_picture())
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+
+    added: list = []
+    async_add_picture_entities(
+        coordinator, entry, added.extend, lambda c, t, k: BraviaTvPictureSensor(c, t, k)
+    )
+    names = sorted(e.target for e in added)
+    # brightness / pictureMode stay with gRPC
+    assert names == [
+        "autoLuminanceLevel",
+        "colorTemperature",
+        "contrast",
+        "sensorAutoAdjustment",
+        "wideMode",
+    ]
+
+    contrast = BraviaTvPictureNumber(coordinator, "contrast")
+    assert (
+        contrast.native_min_value,
+        contrast.native_max_value,
+        contrast.native_step,
+    ) == (0, 100, 1)
+    assert contrast.native_value == 90 and contrast.available
+    await contrast.async_set_native_value(91.0)
+    master = BraviaTvPictureSwitch(coordinator, "sensorAutoAdjustment")
+    assert master.is_on is False
+    await master.async_turn_on()
+    auto = BraviaTvPictureSwitch(coordinator, "autoLuminanceLevel")
+    assert not auto.available  # the TV marks it unavailable while the master is off
+    temp = BraviaTvPictureSelect(coordinator, "colorTemperature")
+    assert temp.options == ["cool", "expert2"] and temp.current_option == "expert2"
+    wide = BraviaTvPictureSelect(coordinator, "wideMode")
+    assert "vertical_fit" in wide.options and not wide.available  # HDMI-only, on an app
+    assert fakes[0].picture_writes == [
+        ("contrast", "91"),
+        ("sensorAutoAdjustment", "on"),
+    ]
+    await coordinator.async_shutdown()
+
+
+async def test_mode_switch_removes_other_picture_entities(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.bravia_tv_grpc import _remove_other_picture_entities
+
+    entry = _entry(hass)
+    reg = er.async_get(hass)
+    sensor = reg.async_get_or_create(
+        "sensor", DOMAIN, "dev_agent_picture_contrast", config_entry=entry
+    )
+    number = reg.async_get_or_create(
+        "number", DOMAIN, "dev_agent_picture_contrast", config_entry=entry
+    )
+    ps_sensor = reg.async_get_or_create(
+        "sensor", DOMAIN, "dev_agent_power_saving", config_entry=entry
+    )
+    other = reg.async_get_or_create(
+        "sensor", DOMAIN, "dev_agent_illuminance", config_entry=entry
+    )
+    _remove_other_picture_entities(hass, entry, writable=True)
+    assert reg.async_get(sensor.entity_id) is None
+    assert reg.async_get(ps_sensor.entity_id) is None
+    assert reg.async_get(number.entity_id) is not None
+    assert reg.async_get(other.entity_id) is not None
+    _remove_other_picture_entities(hass, entry, writable=False)
+    assert reg.async_get(number.entity_id) is None

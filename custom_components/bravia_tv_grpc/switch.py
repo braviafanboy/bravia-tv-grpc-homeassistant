@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvCloudEntity, BraviaTvEntity
+from .entity import (
+    BraviaTvCloudEntity,
+    BraviaTvEntity,
+    BraviaTvPictureEntity,
+    async_add_picture_entities,
+)
 
 # gRPC bool path -> friendly name. Only surfaced when the device advertises them.
 # The audio/picture ones are conditionally usable; the base entity gates them
@@ -68,6 +77,17 @@ async def async_setup_entry(
         if coordinator.cloud_supports(name)
     )
     async_add_entities(entities)
+    if coordinator.rest_writable:
+        async_add_picture_entities(
+            coordinator,
+            entry,
+            async_add_entities,
+            lambda c, target, kind: (
+                BraviaTvPictureSwitch(c, target)
+                if kind == picture.KIND_SWITCH
+                else None
+            ),
+        )
 
 
 class BraviaTvCloudSwitch(BraviaTvCloudEntity, SwitchEntity):
@@ -126,3 +146,20 @@ class BraviaTvSwitch(BraviaTvEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: object) -> None:
         await self._async_set(False)
+
+
+class BraviaTvPictureSwitch(BraviaTvPictureEntity, SwitchEntity):
+    """An on/off picture setting (the Ambient Optimization switches, …)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def is_on(self) -> bool | None:
+        value = self.raw_value
+        return None if value is None else value == "on"
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.async_write("on")
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.async_write("off")

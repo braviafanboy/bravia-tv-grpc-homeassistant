@@ -25,6 +25,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 import voluptuous as vol
@@ -35,7 +36,14 @@ from .const import (
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
     CONF_GRPC_PORT,
+    CONF_PICTURE_EVENT_REFRESH,
+    CONF_PICTURE_POLL_S,
+    CONF_REST_PSK,
+    DEFAULT_PICTURE_EVENT_REFRESH,
+    DEFAULT_PICTURE_POLL_S,
     DOMAIN,
+    MAX_PICTURE_POLL_S,
+    MIN_PICTURE_POLL_S,
 )
 from .grpc.credentials import (
     GrpcNotATvError,
@@ -299,9 +307,19 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                     CONF_AGENT_MANIFEST_URL: (
                         user_input.get(CONF_AGENT_MANIFEST_URL) or ""
                     ).strip(),
+                    CONF_REST_PSK: (user_input.get(CONF_REST_PSK) or "").strip(),
+                    CONF_PICTURE_POLL_S: int(
+                        user_input.get(CONF_PICTURE_POLL_S) or DEFAULT_PICTURE_POLL_S
+                    ),
+                    CONF_PICTURE_EVENT_REFRESH: bool(
+                        user_input.get(
+                            CONF_PICTURE_EVENT_REFRESH, DEFAULT_PICTURE_EVENT_REFRESH
+                        )
+                    ),
                 }
             )
-        current = self.config_entry.options.get(CONF_GRPC_PORT, 0)
+        options = self.config_entry.options
+        current = options.get(CONF_GRPC_PORT, 0)
         schema = vol.Schema(
             {
                 vol.Optional(CONF_GRPC_PORT, default=current): vol.All(
@@ -309,8 +327,31 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                 ),
                 vol.Optional(
                     CONF_AGENT_MANIFEST_URL,
-                    default=self.config_entry.options.get(CONF_AGENT_MANIFEST_URL, ""),
+                    default=options.get(CONF_AGENT_MANIFEST_URL, ""),
                 ): str,
+                vol.Optional(
+                    CONF_REST_PSK, default=options.get(CONF_REST_PSK, "")
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+                vol.Optional(
+                    CONF_PICTURE_POLL_S,
+                    default=options.get(CONF_PICTURE_POLL_S, DEFAULT_PICTURE_POLL_S),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_PICTURE_POLL_S,
+                        max=MAX_PICTURE_POLL_S,
+                        step=1,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_PICTURE_EVENT_REFRESH,
+                    default=options.get(
+                        CONF_PICTURE_EVENT_REFRESH, DEFAULT_PICTURE_EVENT_REFRESH
+                    ),
+                ): selector.BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

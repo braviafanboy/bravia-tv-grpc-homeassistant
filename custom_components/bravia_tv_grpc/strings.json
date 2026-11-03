@@ -35,7 +35,15 @@
         "description": "The gRPC control port is discovered automatically. Set it here only if discovery fails on your network and you know the TV's current port; 0 restores automatic discovery.",
         "data": {
           "grpc_port": "gRPC port (0 = automatic)",
-          "agent_manifest_url": "Agent release manifest URL (blank = GitHub releases)"
+          "agent_manifest_url": "Agent release manifest URL (blank = GitHub releases)",
+          "rest_psk": "IP control pre-shared key",
+          "picture_poll_s": "Picture settings poll interval",
+          "picture_event_refresh": "Refresh picture settings on TV events"
+        },
+        "data_description": {
+          "rest_psk": "Leave empty for read-only picture settings. To change them from Home Assistant, set a key on the TV (Settings → Network → Home network → IP control → Authentication: Normal and Pre-Shared Key, then Pre-Shared Key) and enter the same key here. It is passed to the HA TV Agent on the TV, which uses it locally.",
+          "picture_poll_s": "How often the HA TV Agent re-reads the picture settings while the TV is on. 60 s is recommended; shorter intervals put more load on the TV. Every picture setting is enabled by default: disable the entities you do not use.",
+          "picture_event_refresh": "Re-read immediately when the picture mode, input, content mode or HDR state changes."
         }
       }
     }
@@ -55,6 +63,18 @@
     },
     "agent_setup_complete": {
       "message": "Nothing to set up: the HA TV Agent on {name} already has every permission it needs."
+    },
+    "agent_offline": {
+      "message": "The HA TV Agent on {name} is not connected; the TV may be off."
+    },
+    "rest_key_rejected": {
+      "message": "The TV rejected the IP control key for {name}. Check that the key in the integration options matches the TV's Pre-Shared Key."
+    },
+    "rest_unavailable": {
+      "message": "IP control on {name} is not answering. Check that IP control is enabled on the TV."
+    },
+    "picture_write_refused": {
+      "message": "{name} refused the picture setting change ({code})."
     }
   },
   "entity": {
@@ -76,6 +96,9 @@
       },
       "accessibility_service": {
         "name": "Accessibility Service"
+      },
+      "picture_setting": {
+        "name": "{setting}"
       }
     },
     "number": {
@@ -105,6 +128,9 @@
       },
       "wired_headphone_volume": {
         "name": "Wired Headphone Volume"
+      },
+      "picture_setting": {
+        "name": "{setting}"
       }
     },
     "select": {
@@ -131,6 +157,17 @@
       },
       "living_decor_theme": {
         "name": "Living Decor theme"
+      },
+      "picture_setting": {
+        "name": "{setting}"
+      },
+      "power_saving": {
+        "name": "Power saving",
+        "state": {
+          "off": "Off",
+          "low": "Low",
+          "high": "High"
+        }
       }
     },
     "sensor": {
@@ -175,6 +212,17 @@
       },
       "wifi_link_speed": {
         "name": "Wi-Fi link speed"
+      },
+      "picture_setting": {
+        "name": "{setting}"
+      },
+      "power_saving": {
+        "name": "Power saving",
+        "state": {
+          "off": "Off",
+          "low": "Low",
+          "high": "High"
+        }
       }
     },
     "binary_sensor": {
@@ -232,6 +280,14 @@
     "agent_permissions": {
       "title": "HA TV Agent on {name} needs permissions",
       "description": "The HA TV Agent is running on {name} but has not been granted: {missing}. Now-playing needs Notification access, the remote's battery needs Bluetooth, and updating the agent from Home Assistant needs permission to install unknown apps. Press the **Agent setup** button on the TV's device page, then accept the prompts on the TV with the remote, or open the HA TV Agent app on the TV and follow its status screen."
+    },
+    "rest_key_rejected": {
+      "title": "IP control key rejected by {name}",
+      "description": "The pre-shared key in the integration options is not accepted by {name}, so picture settings cannot be changed. On the TV, check Settings → Network → Home network → IP control → Pre-Shared Key, then enter the same key in the integration options (or clear it there for read-only picture settings)."
+    },
+    "rest_unavailable": {
+      "title": "IP control on {name} is not reachable",
+      "description": "The HA TV Agent cannot reach the TV's IP control, so picture settings are unavailable. On the TV, check that Settings → Network → Home network → IP control is enabled."
     }
   },
   "services": {

@@ -13,13 +13,21 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvAgentEntity, BraviaTvCloudEntity, BraviaTvEntity
+from .entity import (
+    BraviaTvAgentEntity,
+    BraviaTvCloudEntity,
+    BraviaTvEntity,
+    BraviaTvPictureEntity,
+    async_add_picture_entities,
+)
 from .grpc import cloud_commands as cloud
 from .util import friendly_enum_label, parse_json_value
 
@@ -112,7 +120,20 @@ async def async_setup_entry(
         _SELECT_MEDIA, "post"
     ):
         entities.append(BraviaTvThemeSelect(coordinator))
+    if coordinator.agent is not None and coordinator.rest_writable:
+        entities.append(BraviaTvPowerSavingSelect(coordinator))
     async_add_entities(entities)
+    if coordinator.rest_writable:
+        async_add_picture_entities(
+            coordinator,
+            entry,
+            async_add_entities,
+            lambda c, target, kind: (
+                BraviaTvPictureSelect(c, target)
+                if kind == picture.KIND_SELECT
+                else None
+            ),
+        )
 
 
 class BraviaTvCloudSelect(BraviaTvCloudEntity, SelectEntity):
@@ -338,3 +359,51 @@ class BraviaTvThemeSelect(BraviaTvAgentEntity, SelectEntity):
         )
         self._current = option
         self.async_write_ha_state()
+
+
+class BraviaTvPictureSelect(BraviaTvPictureEntity, SelectEntity):
+    """A picture setting with named choices (color temperature, Motionflow, …);
+    the choices are the TV's own values."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def options(self) -> list[str]:
+        return picture.select_options(self.target, self.info)
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.raw_value
+        return value if value in self.options else None
+
+    async def async_select_option(self, option: str) -> None:
+        await self.async_write(option)
+
+
+POWER_SAVING_MODES = ["off", "low", "high"]
+
+
+class BraviaTvPowerSavingSelect(BraviaTvAgentEntity, SelectEntity):
+    """The TV's power-saving mode (REST IP control, relayed by the agent)."""
+
+    _attr_translation_key = "power_saving"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = POWER_SAVING_MODES
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "power_saving", "power_saving")
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.agent_value("rest", "available") is True
+        )
+
+    @property
+    def current_option(self) -> str | None:
+        value = self.coordinator.agent_value("power_saving")
+        return value if value in POWER_SAVING_MODES else None
+
+    async def async_select_option(self, option: str) -> None:
+        await self.coordinator.async_set_power_saving(option)

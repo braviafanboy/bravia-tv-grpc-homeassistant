@@ -33,6 +33,7 @@ TO_REDACT = {
     "unique_id",
     "device_unique_id",
     "agent_token",
+    "rest_psk",
     "agent_cert",
     # Paired wireless-speaker identifiers (surfaced as sensor attributes).
     *(
@@ -74,6 +75,10 @@ def _diagnostics(
             if coordinator.agent
             else None,
             "themes": [t.get("id") for t in coordinator.agent_themes],
+            "rest": coordinator.agent_value("rest"),
+            "picture_targets": sorted(
+                (coordinator.agent_value("picture", "targets") or {}).keys()
+            ),
         },
         "state": async_redact_data(dict(coordinator.data or {}), TO_REDACT),
         "app_list": [

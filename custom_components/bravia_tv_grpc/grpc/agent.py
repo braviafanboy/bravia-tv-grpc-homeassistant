@@ -31,6 +31,9 @@ BLOCKS = (
     "bluetooth",
     "wifi",
     "settings",
+    "rest",
+    "picture",
+    "power_saving",
 )
 _INFO_TIMEOUT = 4
 _REQUEST_TIMEOUT = 8
@@ -52,6 +55,16 @@ class AgentPairingClosed(AgentError):
 
 class AgentFingerprintMismatch(AgentError):
     """The agent presented a certificate other than the pinned one."""
+
+
+class AgentRequestError(AgentError):
+    """The agent refused a request; ``code`` is its error string (e.g.
+    ``rest_unauthorized``, ``invalid_value``, ``rest_unavailable``)."""
+
+    def __init__(self, code: str, status: int) -> None:
+        super().__init__(f"{code} (HTTP {status})")
+        self.code = code
+        self.status = status
 
 
 def new_token() -> str:
@@ -364,6 +377,85 @@ class AgentClient:
             raise
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             raise self._wrap(err, "update") from err
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
+        timeout: float = _REQUEST_TIMEOUT,
+    ) -> dict[str, Any]:
+        """An authenticated request; returns the JSON reply or raises."""
+        try:
+            async with self._session.request(
+                method,
+                self.url(path),
+                json=body,
+                params=params,
+                headers=self._headers(),
+                ssl=self._ssl(),
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                self._observe(resp)
+                if resp.status == 401:
+                    raise AgentUnauthorized(path)
+                try:
+                    data = await resp.json(content_type=None)
+                except ValueError:
+                    data = None
+                if resp.status != 200:
+                    code = data.get("error") if isinstance(data, dict) else None
+                    raise AgentRequestError(str(code or "http_error"), resp.status)
+        except AgentError:
+            raise
+        except (TimeoutError, aiohttp.ClientError, OSError) as err:
+            raise self._wrap(err, path) from err
+        return data if isinstance(data, dict) else {}
+
+    async def async_picture_refresh(self) -> None:
+        """``POST /v1/picture/refresh``: re-read the REST picture settings now."""
+        await self._request("POST", "/v1/picture/refresh")
+
+    async def async_picture_config(
+        self, poll_s: int, event_refresh: bool, watch: list[str]
+    ) -> dict[str, Any]:
+        """``POST /v1/picture/config``: refresh settings, stored on the TV."""
+        return await self._request(
+            "POST",
+            "/v1/picture/config",
+            body={"poll_s": poll_s, "event_refresh": event_refresh, "watch": watch},
+        )
+
+    async def async_set_picture(self, target: str, value: str) -> None:
+        """``POST /v1/picture``: write one picture-quality target."""
+        # Writes wait for the TV and the agent's re-read; allow for both.
+        await self._request(
+            "POST",
+            "/v1/picture",
+            body={"target": target, "value": value},
+            timeout=_REQUEST_TIMEOUT * 2,
+        )
+
+    async def async_set_power_saving(self, mode: str) -> None:
+        """``POST /v1/power_saving?mode=``."""
+        await self._request(
+            "POST",
+            "/v1/power_saving",
+            params={"mode": mode},
+            timeout=_REQUEST_TIMEOUT * 2,
+        )
+
+    async def async_set_psk(self, psk: str) -> bool:
+        """``POST /v1/rest/psk``: hand the agent the IP-control key; True when
+        the TV accepted it."""
+        data = await self._request("POST", "/v1/rest/psk", body={"psk": psk})
+        return bool(data.get("write_authorized"))
+
+    async def async_forget_rest_auth(self) -> None:
+        """``DELETE /v1/rest/auth``: drop the agent's IP-control credential."""
+        await self._request("DELETE", "/v1/rest/auth")
 
     async def async_events(self) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         """Stream ``(event, payload)`` from ``GET /v1/events`` until the link drops.

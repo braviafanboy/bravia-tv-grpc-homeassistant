@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import picture
 from .const import (
     CONF_MANUFACTURER,
     CONF_MODEL,
@@ -138,3 +144,88 @@ class BraviaTvAgentEntity(BraviaTvEntity):
     def agent_value(self, *keys: str) -> Any:
         """A value from this entity's agent block (nested by ``keys``)."""
         return self.coordinator.agent_value(self._block, *keys)
+
+
+class BraviaTvPictureEntity(BraviaTvAgentEntity):
+    """A picture-quality target from the TV's REST IP control, relayed by the
+    agent (``agent.picture.targets.<target>``). Named after the target;
+    unavailable while IP control does not answer or the TV marks the target
+    unavailable (e.g. HDMI-only settings on an app, or the Ambient Optimization
+    sub-switches while the master switch is off)."""
+
+    _attr_translation_key = "picture_setting"
+
+    def __init__(self, coordinator: BraviaTvCoordinator, target: str) -> None:
+        super().__init__(coordinator, "picture", f"picture_{target}")
+        self.target = target
+        self._attr_translation_placeholders = {"setting": picture.label(target)}
+
+    @property
+    def info(self) -> dict[str, Any]:
+        value = self.agent_value("targets", self.target)
+        return value if isinstance(value, dict) else {}
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self.coordinator.agent_value("rest", "available") is True
+            and bool(self.info)
+            and self.info.get("available") is True
+        )
+
+    @property
+    def raw_value(self) -> str | None:
+        value = self.info.get("value")
+        return value if isinstance(value, str) and value != "" else None
+
+    async def async_write(self, value: str) -> None:
+        await self.coordinator.async_set_picture(self.target, value)
+
+
+@callback
+def async_add_picture_entities(
+    coordinator: BraviaTvCoordinator,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+    factory: Callable[[BraviaTvCoordinator, str, str], Entity | None],
+) -> None:
+    """Add picture entities as the agent reports targets: now, and whenever a
+    target appears later (the agent connects after setup, a new firmware adds
+    one). ``factory(coordinator, target, kind)`` returns the entity for the
+    platform, or None to skip it."""
+    if coordinator.agent is None:
+        return
+    added: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        targets = coordinator.agent_value("picture", "targets")
+        if not isinstance(targets, dict):
+            return
+        new: list[Entity] = []
+        for target, info in targets.items():
+            if target in added:
+                continue
+            if target in picture.EXCLUDED:
+                added.add(target)
+                continue
+            kind = picture.kind_of(target, info if isinstance(info, dict) else None)
+            entity = factory(coordinator, target, kind)
+            if entity is not None:
+                added.add(target)
+                new.append(entity)
+            elif kind is not None:
+                # Decided, and it belongs to another platform.
+                added.add(target)
+        if new:
+            async_add_entities(new)
+            # The watch list (what the agent polls at short intervals) is
+            # built from the registry; send it again now these exist.
+            coordinator.hass.async_create_task(
+                coordinator.async_agent_resync_rest(),
+                name="bravia_tv_picture_resync",
+            )
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
