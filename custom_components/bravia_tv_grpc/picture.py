@@ -61,6 +61,10 @@ _LABELS = {
     "realityCreationResolution": "Reality Creation resolution",
     "realityCreationType": "Reality Creation type",
     "sensorAutoAdjustment": "Ambient Optimization",
+    # The TV's menu: Colour gamma adjustment, points 1-20, each with R/G/B-Offset.
+    "redOffset": "Colour gamma adjustment R-Offset",
+    "greenOffset": "Colour gamma adjustment G-Offset",
+    "blueOffset": "Colour gamma adjustment B-Offset",
 }
 
 

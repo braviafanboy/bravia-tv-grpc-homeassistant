@@ -572,9 +572,10 @@ class BraviaTvPictureSensor(BraviaTvPictureEntity, SensorEntity):
 
 
 class BraviaTvPicturePointsSensor(BraviaTvPictureEntity, SensorEntity):
-    """A picture setting holding a list of values, such as the 20-point white
-    balance offsets: shown read-only (state lists the values; the
-    ``points`` attribute has them as numbers, with the allowed range)."""
+    """A picture setting holding a list of values, such as the R/G/B-Offset of
+    the TV's Colour gamma adjustment (points 1-20): shown read-only (state lists
+    the values in point order; the ``points`` attribute has them as numbers,
+    with the allowed range)."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
