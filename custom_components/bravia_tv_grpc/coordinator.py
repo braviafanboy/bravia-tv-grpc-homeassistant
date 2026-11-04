@@ -259,6 +259,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # the key was handed to the agent yet in this lifetime, the debounced
         # gRPC-triggered refresh, and since when IP control is unreachable.
         self.applied_rest_options = rest_options(entry.options)
+        # Whether setup created the agent entities (see agent_expected).
+        self.agent_entities_created = False
         self._rest_psk_sent = False
         self._cancel_picture_refresh: Any = None
         self._rest_unavailable_since: datetime | None = None
@@ -517,6 +519,14 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         else:
             await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
+
+    @property
+    def agent_expected(self) -> bool:
+        """Whether this TV has an agent: one answered, or one was paired before
+        (a token is stored). Agent entities exist whenever this holds, so a
+        setup while the TV is in standby (agent unreachable) keeps them; they
+        are unavailable until the agent's stream is up."""
+        return self.agent is not None or bool(self._entry.data.get(CONF_AGENT_TOKEN))
 
     # -- picture settings over REST (relayed by the agent) -------------------
     @property

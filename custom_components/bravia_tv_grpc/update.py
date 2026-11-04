@@ -62,9 +62,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Bravia TV firmware update entity if advertised."""
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
+    entities: list[UpdateEntity] = []
     if _FW_UPDATE in coordinator.client.capabilities:
-        entities: list[UpdateEntity] = [BraviaTvFirmwareUpdate(coordinator)]
-    if coordinator.agent is not None:
+        entities.append(BraviaTvFirmwareUpdate(coordinator))
+    if coordinator.agent_expected:
         entities.append(BraviaTvAgentUpdate(coordinator))
     async_add_entities(entities)
 

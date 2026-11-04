@@ -138,6 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _ensure_device_info(hass, entry, creds, device_id, coordinator)
     _remove_other_picture_entities(hass, entry, coordinator.rest_writable)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    coordinator.agent_entities_created = coordinator.agent_expected
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
@@ -255,6 +256,11 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     new_manual = entry.options.get(CONF_GRPC_PORT) or None
     if coordinator is None or new_manual != coordinator.applied_manual_port:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    # An agent paired for the first time after setup (the token was just
+    # stored): set up again so its entities exist.
+    if coordinator.agent_expected and not coordinator.agent_entities_created:
         await hass.config_entries.async_reload(entry.entry_id)
         return
     # The IP-control key decides between read-only picture sensors and

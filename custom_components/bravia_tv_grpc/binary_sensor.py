@@ -64,7 +64,7 @@ async def async_setup_entry(
         entities.append(BraviaTvErrorSensor(coordinator))
     if _HDMI_DEVICE in caps:
         entities.append(BraviaTvHdmiDeviceSensor(coordinator))
-    if coordinator.agent is not None:
+    if coordinator.agent_expected:
         entities.extend(
             BraviaTvAgentBoolSensor(coordinator, key, spec)
             for key, spec in _AGENT_BOOL_SENSORS.items()

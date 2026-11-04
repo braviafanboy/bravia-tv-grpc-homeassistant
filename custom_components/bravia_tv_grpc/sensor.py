@@ -183,7 +183,7 @@ async def async_setup_entry(
         entities.append(BraviaTvRestrictedControlsSensor(coordinator))
     if _BT_DEVICE in caps:
         entities.append(BraviaTvBluetoothDeviceSensor(coordinator))
-    if coordinator.agent is not None:
+    if coordinator.agent_expected:
         entities.extend(
             BraviaTvAgentSensor(coordinator, key, spec)
             for key, spec in _AGENT_SENSORS.items()

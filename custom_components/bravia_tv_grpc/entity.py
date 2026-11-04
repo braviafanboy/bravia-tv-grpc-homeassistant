@@ -193,8 +193,9 @@ def async_add_picture_entities(
     """Add picture entities as the agent reports targets: now, and whenever a
     target appears later (the agent connects after setup, a new firmware adds
     one). ``factory(coordinator, target, kind)`` returns the entity for the
-    platform, or None to skip it."""
-    if coordinator.agent is None:
+    platform, or None to skip it. Picture entities belong to a paired agent;
+    their targets arrive once its stream is up, which may be after setup."""
+    if not coordinator.agent_expected:
         return
     added: set[str] = set()
 

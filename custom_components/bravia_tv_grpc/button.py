@@ -19,7 +19,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
-    if coordinator.agent is not None:
+    if coordinator.agent_expected:
         async_add_entities([BraviaTvAgentSetupButton(coordinator)])
 
 

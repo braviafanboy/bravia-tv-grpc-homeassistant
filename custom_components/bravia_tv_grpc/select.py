@@ -116,11 +116,9 @@ async def async_setup_entry(
         values = coordinator.cloud_values.get(name)
         if coordinator.cloud_supports(name) and values:
             entities.append(BraviaTvCloudSelect(coordinator, name, key, icon, values))
-    if coordinator.agent is not None and coordinator.cloud_supports(
-        _SELECT_MEDIA, "post"
-    ):
+    if coordinator.agent_expected and coordinator.cloud_supports(_SELECT_MEDIA, "post"):
         entities.append(BraviaTvThemeSelect(coordinator))
-    if coordinator.agent is not None and coordinator.rest_writable:
+    if coordinator.agent_expected and coordinator.rest_writable:
         entities.append(BraviaTvPowerSavingSelect(coordinator))
     async_add_entities(entities)
     if coordinator.rest_writable:
