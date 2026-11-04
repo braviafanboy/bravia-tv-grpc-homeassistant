@@ -41,7 +41,7 @@
           "picture_event_refresh": "Refresh picture settings on TV events"
         },
         "data_description": {
-          "rest_psk": "Leave empty for read-only picture settings. To change them from Home Assistant, set a key on the TV (Settings → Network → Home network → IP control → Authentication: Normal and Pre-Shared Key, then Pre-Shared Key) and enter the same key here. It is passed to the HA TV Agent on the TV, which uses it locally.",
+          "rest_psk": "Leave empty for read-only picture settings. To change them from Home Assistant, set a key on the TV: in its network settings under IP control, set Authentication to Normal and Pre-Shared Key and enter a Pre-Shared Key, then enter the same key here. Remote device settings → Control remotely must be on. The key is passed to the HA TV Agent on the TV, which uses it locally.",
           "picture_poll_s": "How often the HA TV Agent re-reads the picture settings while the TV is on. 60 s is recommended; shorter intervals put more load on the TV. Every picture setting is enabled by default: disable the entities you do not use.",
           "picture_event_refresh": "Re-read immediately when the picture mode, input, content mode or HDR state changes."
         }
@@ -71,7 +71,7 @@
       "message": "The TV rejected the IP control key for {name}. Check that the key in the integration options matches the TV's Pre-Shared Key."
     },
     "rest_unavailable": {
-      "message": "IP control on {name} is not answering. Check that IP control is enabled on the TV."
+      "message": "IP control on {name} is not answering. Check that Remote device settings → Control remotely is on on the TV."
     },
     "picture_write_refused": {
       "message": "{name} refused the picture setting change ({code})."
@@ -283,11 +283,11 @@
     },
     "rest_key_rejected": {
       "title": "IP control key rejected by {name}",
-      "description": "The pre-shared key in the integration options is not accepted by {name}, so picture settings cannot be changed. On the TV, check Settings → Network → Home network → IP control → Pre-Shared Key, then enter the same key in the integration options (or clear it there for read-only picture settings)."
+      "description": "The pre-shared key in the integration options is not accepted by {name}, so picture settings cannot be changed. On the TV, check the Pre-Shared Key under IP control in the network settings (Authentication must be Normal and Pre-Shared Key), then enter the same key in the integration options, or clear it there for read-only picture settings."
     },
     "rest_unavailable": {
       "title": "IP control on {name} is not reachable",
-      "description": "The HA TV Agent cannot reach the TV's IP control, so picture settings are unavailable. On the TV, check that Settings → Network → Home network → IP control is enabled."
+      "description": "The HA TV Agent cannot reach the TV's IP control, so picture settings are unavailable. On the TV, check that Remote device settings → Control remotely is on (it switches the TV's IP control off for every app, not only Home Assistant)."
     }
   },
   "services": {

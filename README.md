@@ -269,9 +269,13 @@ itself, so nothing extra is exposed on your network.
 
 - **Read-only by default.** Without a key the settings are sensors showing the
   TV's current values.
-- **To change them from Home Assistant**, set a key on the TV: Settings →
-  Network → Home network → IP control → Authentication → *Normal and
-  Pre-Shared Key*, then *Pre-Shared Key*. Enter the same key in the
+- **IP control must be on**: Remote device settings → *Control remotely*. It
+  is the switch for the TV's IP control as a whole; with it off, the picture
+  settings are unavailable (and other remote apps stop working too). *Simple
+  IP control* is a different, older protocol and can stay off.
+- **To change them from Home Assistant**, set a key on the TV: in its network
+  settings under IP control, set *Authentication* to *Normal and Pre-Shared
+  Key* and enter a *Pre-Shared Key*. Enter the same key in the
   integration's options (**IP control pre-shared key**). The settings become
   numbers, switches and selects, and power saving becomes a select. Clearing
   the key turns them back into sensors. The key is stored in the config entry
@@ -291,7 +295,7 @@ itself, so nothing extra is exposed on your network.
   Ambient Optimization sub-switches while the master switch is off, HDR tone
   mapping on SDR content.
 - **Repairs** tell you when the TV rejects the key, or when IP control stays
-  unreachable (switched off on the TV).
+  unreachable for 3 minutes (Control remotely switched off on the TV).
 
 ## Soundbar control is out of scope
 

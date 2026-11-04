@@ -262,6 +262,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._rest_psk_sent = False
         self._cancel_picture_refresh: Any = None
         self._rest_unavailable_since: datetime | None = None
+        self._cancel_rest_recheck: Any = None
         # Dynamic range class of the video signal (hdr_type, "sdr" when there
         # is no video): the TV keeps separate picture values per class.
         self._last_hdr_type: str | None = None
@@ -677,6 +678,19 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             now = dt_util.utcnow()
             if self._rest_unavailable_since is None:
                 self._rest_unavailable_since = now
+                # The agent only sends state when something changes, so do
+                # not wait for the next document to notice the grace is over.
+                if self._cancel_rest_recheck is not None:
+                    self._cancel_rest_recheck()
+
+                @callback
+                def _recheck(_now: Any) -> None:
+                    self._cancel_rest_recheck = None
+                    self._update_rest_issues()
+
+                self._cancel_rest_recheck = async_call_later(
+                    self.hass, _REST_UNAVAILABLE_GRACE.total_seconds() + 1, _recheck
+                )
             if now - self._rest_unavailable_since >= _REST_UNAVAILABLE_GRACE:
                 ir.async_create_issue(
                     self.hass,
@@ -689,6 +703,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
         else:
             self._rest_unavailable_since = None
+            if self._cancel_rest_recheck is not None:
+                self._cancel_rest_recheck()
+                self._cancel_rest_recheck = None
             ir.async_delete_issue(self.hass, DOMAIN, unavailable_id)
 
     async def async_agent_setup(self) -> None:
@@ -1418,6 +1435,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._cancel_rest_recheck is not None:
+            self._cancel_rest_recheck()
+            self._cancel_rest_recheck = None
         if self._cancel_picture_refresh is not None:
             self._cancel_picture_refresh()
             self._cancel_picture_refresh = None

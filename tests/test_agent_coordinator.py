@@ -846,3 +846,36 @@ async def test_mode_switch_removes_other_picture_entities(hass: HomeAssistant):
     assert reg.async_get(other.entity_id) is not None
     _remove_other_picture_entities(hass, entry, writable=False)
     assert reg.async_get(number.entity_id) is None
+
+
+async def test_unreachable_ip_control_repair_without_further_updates(
+    hass: HomeAssistant,
+):
+    """The agent only sends state on change: a timer re-checks once the grace
+    has passed (no new document needed), and the repair clears when IP control
+    answers again."""
+    from datetime import timedelta
+
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(
+        hass, entry, fakes, configure=_with_picture({**_REST_OK, "available": False})
+    )
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    issue_id = f"rest_unavailable_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None  # within the grace
+    assert coordinator._cancel_rest_recheck is not None  # a re-check is scheduled
+    # Pretend the grace has passed, then let the scheduled re-check run.
+    coordinator._rest_unavailable_since -= timedelta(minutes=4)
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=3, seconds=5))
+    await hass.async_block_till_done()
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    fakes[0].events.put_nowait(("state", {**fakes[0].state_doc, "rest": _REST_OK}))
+    await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is None)
+    assert coordinator._cancel_rest_recheck is None
+    await coordinator.async_shutdown()
