@@ -134,3 +134,34 @@ async def test_first_pairing_after_setup_reloads_once(hass: HomeAssistant):
     with patch.object(hass.config_entries, "async_reload", new=AsyncMock()) as reload:
         await _async_update_listener(hass, entry)
     reload.assert_not_awaited()
+
+
+async def test_manual_refresh_returns_pushed_state_and_keeps_failures(
+    hass: HomeAssistant,
+):
+    """homeassistant.update_entity must not raise NotImplementedError, and must
+    not make a dead TV look alive."""
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    _entry, coordinator = _setup(hass, token=None)
+    coordinator._state["volume"] = 12
+    coordinator.async_set_updated_data(dict(coordinator._state))
+    await coordinator.async_refresh()
+    assert coordinator.last_update_success
+    assert coordinator.data["volume"] == 12
+
+    coordinator.async_set_update_error(UpdateFailed("Bravia TV liveness probe failed"))
+    await coordinator.async_refresh()
+    assert not coordinator.last_update_success
+
+
+async def test_agent_update_entity_refresh_rechecks_the_manifest(
+    hass: HomeAssistant,
+):
+    entry, coordinator = _setup(hass, token="tok")
+    entity = update.BraviaTvAgentUpdate(coordinator)
+    with patch.object(
+        coordinator, "async_check_agent_update", new=AsyncMock()
+    ) as check:
+        await entity.async_update()
+    check.assert_awaited_once()

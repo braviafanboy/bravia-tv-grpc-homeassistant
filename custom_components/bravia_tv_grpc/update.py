@@ -183,6 +183,10 @@ class BraviaTvAgentUpdate(BraviaTvAgentEntity, UpdateEntity):
         latest = self.coordinator.agent_latest
         return str(latest.get("notes") or "") if latest else None
 
+    async def async_update(self) -> None:
+        """Re-read the agent's release manifest ("Check for updates")."""
+        await self.coordinator.async_check_agent_update()
+
     async def async_install(
         self, version: str | None, backup: bool, **kwargs: Any
     ) -> None:

@@ -1101,6 +1101,17 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
 
+    async def _async_update_data(self) -> dict[str, Any]:
+        """On-demand refresh (``homeassistant.update_entity``, "Check for updates").
+
+        State arrives by push and the liveness timer watches the connection, so
+        a manual refresh reads nothing from the TV. It must not hide a dead
+        connection either: a recorded failure stays a failure.
+        """
+        if not self.last_update_success:
+            raise UpdateFailed("Bravia TV liveness probe failed")
+        return dict(self._state)
+
     async def _async_liveness(self) -> bool:
         """Cheap single-path GetStates to confirm the connection is alive."""
         try:
