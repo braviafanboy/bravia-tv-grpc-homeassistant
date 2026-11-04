@@ -165,3 +165,20 @@ async def test_agent_update_entity_refresh_rechecks_the_manifest(
     ) as check:
         await entity.async_update()
     check.assert_awaited_once()
+
+
+async def test_retired_living_decor_select_is_removed(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.bravia_tv_grpc import _remove_retired_entities
+
+    entry, _coordinator = _setup(hass, token="tok")
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "select",
+        DOMAIN,
+        "dev_agent_living_decor_theme",
+        config_entry=entry,
+    )
+    _remove_retired_entities(hass, entry)
+    assert registry.async_get(old.entity_id) is None

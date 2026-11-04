@@ -28,7 +28,6 @@ from .entity import (
     BraviaTvPictureEntity,
     async_add_picture_entities,
 )
-from .grpc import cloud_commands as cloud
 from .util import friendly_enum_label, parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,8 +115,6 @@ async def async_setup_entry(
         values = coordinator.cloud_values.get(name)
         if coordinator.cloud_supports(name) and values:
             entities.append(BraviaTvCloudSelect(coordinator, name, key, icon, values))
-    if coordinator.agent_expected and coordinator.cloud_supports(_SELECT_MEDIA, "post"):
-        entities.append(BraviaTvThemeSelect(coordinator))
     if coordinator.agent_expected and coordinator.rest_writable:
         entities.append(BraviaTvPowerSavingSelect(coordinator))
     async_add_entities(entities)
@@ -306,57 +303,6 @@ class BraviaTvAudioGroupSelect(BraviaTvEntity, SelectEntity):
                 translation_key="exec_rejected",
                 translation_placeholders={"path": _AUDIO_ACTIVATE},
             )
-
-
-_SELECT_MEDIA = "select_media"
-_LIVING_DECOR = "com.sony.dtv.livingfit"
-
-
-class BraviaTvThemeSelect(BraviaTvAgentEntity, SelectEntity):
-    """Living Decor theme: options from the agent's theme list, shown through
-    the cloud ``select_media`` command (the TV never reports which theme is
-    on, so the last selection is kept optimistically until the TV restarts)."""
-
-    _attr_translation_key = "living_decor_theme"
-    _attr_entity_registry_enabled_default = False
-
-    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
-        super().__init__(coordinator, "display", "living_decor_theme")
-        self._current: str | None = None
-
-    @property
-    def available(self) -> bool:
-        return super().available and bool(self.coordinator.agent_themes)
-
-    def _themes(self) -> dict[str, str]:
-        return {
-            str(t.get("title") or t.get("id")): str(t["id"])
-            for t in self.coordinator.agent_themes
-            if t.get("id")
-        }
-
-    @property
-    def options(self) -> list[str]:
-        return list(self._themes())
-
-    @property
-    def current_option(self) -> str | None:
-        return self._current if self._current in self._themes() else None
-
-    async def async_select_option(self, option: str) -> None:
-        theme_id = self._themes().get(option)
-        if theme_id is None:
-            raise HomeAssistantError(f"Unknown Living Decor theme {option}")
-        await self.coordinator.async_cloud_command(
-            _SELECT_MEDIA,
-            [
-                cloud.post_command(
-                    _SELECT_MEDIA, {"contentId": theme_id, "packageName": _LIVING_DECOR}
-                )
-            ],
-        )
-        self._current = option
-        self.async_write_ha_state()
 
 
 class BraviaTvPictureSelect(BraviaTvPictureEntity, SelectEntity):

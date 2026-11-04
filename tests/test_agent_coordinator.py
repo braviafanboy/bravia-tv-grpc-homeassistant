@@ -166,9 +166,6 @@ class FakeAgent:
             raise agentmod.AgentUnauthorized("state")
         return self.state_doc
 
-    async def async_themes(self):
-        return [{"id": "theme://a", "title": "A"}]
-
     async def async_pair(self, name):
         self._handshake()
         if not self.pair_tokens:
@@ -265,7 +262,6 @@ async def test_stored_token_streams_state(hass: HomeAssistant):
     )
     assert coordinator.data[AGENT_ONLINE] is True
     assert coordinator.agent_value("bluetooth", "remote", "battery_pct") == 30
-    assert coordinator.agent_themes[0]["id"] == "theme://a"
     assert entry.data[CONF_AGENT_TOKEN] == "tok"
     # A pre-TLS token still works; the certificate gets pinned on first use.
     assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(

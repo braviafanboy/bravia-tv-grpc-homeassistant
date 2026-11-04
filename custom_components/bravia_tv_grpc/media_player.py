@@ -5,7 +5,7 @@ source selection into a single media_player. Features are added only for paths
 the device advertises, so the entity degrades gracefully on models that lack
 one. SELECT_SOURCE switches external inputs (by their native id) and launches
 apps, both via the verified any-typed write. Playback transport, seek and the
-``url`` / ``theme`` / ``channel`` play_media types, the ``search`` service and
+``url`` / ``channel`` play_media types, the ``search`` service and
 the standby power-on fallback go through the Sony cloud command channel and
 are offered only when the TV advertises those cloud capabilities.
 """
@@ -71,10 +71,6 @@ _CHANNEL = "channel"
 # through play_media with media type ``url`` (package guessed from the host, or
 # given as ``extra.package_name``). Verified with YouTube.
 _DEEP_LINK = "application.deep_link"
-# Cloud-only Living Decor theme selection (``post {"contentId", "packageName"}``);
-# surfaced through play_media with media type ``theme`` and a ``theme://`` id.
-_SELECT_MEDIA = "select_media"
-_LIVING_DECOR = "com.sony.dtv.livingfit"
 # Cloud-only on-screen search (Sony's voice-search results page); surfaced as
 # the ``search`` entity service. Takes over the screen and audio focus.
 _SEARCH = "search"
@@ -90,7 +86,6 @@ _MUSIC_APPS = {
 }
 _SEARCH_DISPLAY = "ACTION_SEARCH_AND_DISPLAY_RESULTS"
 _SEARCH_PLAY = "ACTION_SEARCH_AND_PLAY"
-_MEDIA_TYPE_THEME = "theme"
 
 
 async def async_setup_entry(
@@ -149,8 +144,7 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
                 | MediaPlayerEntityFeature.PLAY_MEDIA
             )
         if any(
-            coordinator.cloud_supports(name, "post")
-            for name in (_CHANNEL, _DEEP_LINK, _SELECT_MEDIA)
+            coordinator.cloud_supports(name, "post") for name in (_CHANNEL, _DEEP_LINK)
         ):
             features |= MediaPlayerEntityFeature.PLAY_MEDIA
         # Transport controls go through the Sony cloud command channel; only
@@ -403,7 +397,7 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
     ) -> None:
         """Launch an app (media_id is the package id), or via the cloud:
         ``channel`` tunes a channel number, ``url`` opens a deep link in the
-        matching app, ``theme`` shows a Living Decor theme (``theme://…``)."""
+        matching app."""
         if media_type == MediaType.CHANNEL:
             await self.coordinator.async_cloud_command(
                 _CHANNEL, [cloud.post_command(_CHANNEL, {"number": str(media_id)})]
@@ -424,17 +418,6 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
                 [
                     cloud.post_command(
                         _DEEP_LINK, {"package_name": package, "uri": media_id}
-                    )
-                ],
-            )
-            return
-        if media_type == _MEDIA_TYPE_THEME:
-            await self.coordinator.async_cloud_command(
-                _SELECT_MEDIA,
-                [
-                    cloud.post_command(
-                        _SELECT_MEDIA,
-                        {"contentId": media_id, "packageName": _LIVING_DECOR},
                     )
                 ],
             )

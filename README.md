@@ -19,8 +19,8 @@ change to Home Assistant as it happens.
   example "4K 24fps Dolby Vision") and the audio format, ready for
   automations such as switching a soundbar's sound mode.
 - **Controls only Sony's cloud offers.** The sleep timer, Picture Off,
-  playback and seek, deep links into apps, Living Decor themes, on-screen
-  search, and waking the TV from standby. These go through Sony's cloud, as
+  playback and seek, deep links into apps, on-screen search, and waking the
+  TV from standby. These go through Sony's cloud, as
   they do in BRAVIA Connect, and need internet access.
 - **More with the optional HA TV Agent.** A small companion app on the TV adds
   the ambient light and temperature sensors, now-playing titles and artwork,

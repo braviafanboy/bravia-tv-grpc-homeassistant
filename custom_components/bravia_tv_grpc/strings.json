@@ -155,9 +155,6 @@
       "speaker_type": {
         "name": "Speaker Type"
       },
-      "living_decor_theme": {
-        "name": "Living Decor theme"
-      },
       "picture_setting": {
         "name": "{setting}",
         "state": {

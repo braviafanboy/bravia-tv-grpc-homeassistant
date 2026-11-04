@@ -141,7 +141,6 @@ _AGENT_APP_PATH = "system_setting.application"
 _AGENT_DEEP_LINK = "application.deep_link"
 _AGENT_PAIR_WINDOW = 60
 _AGENT_PAIR_RETRY = timedelta(minutes=10)
-_AGENT_THEMES_INTERVAL = timedelta(hours=1)
 _AGENT_MANIFEST_INTERVAL = timedelta(hours=6)
 _AGENT_BACKOFF_MAX = 60
 # Session keys last 24 h and the TV forgets the session when they lapse;
@@ -241,15 +240,13 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cloud_lock = asyncio.Lock()
         self._cancel_cloud_poll: Any = None
         # HA TV Agent (companion app): client once discovered on the TV's
-        # host, its /v1/info document, the Living Decor theme list it serves,
-        # the background task that keeps its event stream open, and the last
-        # pairing attempt (rate limit for re-pairing after a 401).
+        # host, its /v1/info document, the background task that keeps its
+        # event stream open, and the last pairing attempt (rate limit for
+        # re-pairing after a 401).
         self.agent: agentmod.AgentClient | None = None
         self.agent_info: dict[str, Any] = {}
-        self.agent_themes: list[dict[str, Any]] = []
         self._agent_task: asyncio.Task | None = None
         self._agent_last_pair: datetime | None = None
-        self._agent_themes_at: datetime | None = None
         self._cancel_key_renewal: Any = None
         # Latest agent release per the manifest (version/url/sha256/notes).
         self.agent_latest: dict[str, Any] | None = None
@@ -784,7 +781,6 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self.async_agent_refresh_info()
                 await self._async_agent_sync_rest()
                 backoff = 5
-                await self._async_agent_refresh_themes()
                 async for event, payload in client.async_events():
                     if event == "state":
                         self._apply_agent_document(payload)
@@ -828,20 +824,6 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "pinned the HA TV Agent certificate %s…",
             agentmod.fingerprint_of(cert)[:16],
         )
-
-    async def _async_agent_refresh_themes(self) -> None:
-        now = dt_util.utcnow()
-        if (
-            self._agent_themes_at
-            and now - self._agent_themes_at < _AGENT_THEMES_INTERVAL
-        ):
-            return
-        assert self.agent is not None
-        try:
-            self.agent_themes = await self.agent.async_themes()
-        except agentmod.AgentError:
-            return
-        self._agent_themes_at = now
 
     async def _async_agent_pair(self) -> bool:
         """Obtain a bearer token from the agent and persist it.

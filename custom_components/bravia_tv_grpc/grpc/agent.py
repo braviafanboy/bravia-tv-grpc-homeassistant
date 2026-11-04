@@ -301,15 +301,6 @@ class AgentClient:
     async def async_state(self) -> dict[str, Any]:
         return await self._get_json("/v1/state", _REQUEST_TIMEOUT)
 
-    async def async_themes(self) -> list[dict[str, Any]]:
-        data = await self._get_json("/v1/themes", _REQUEST_TIMEOUT)
-        themes = data.get("themes")
-        return (
-            [t for t in themes if isinstance(t, dict)]
-            if isinstance(themes, list)
-            else []
-        )
-
     async def async_artwork(self) -> bytes | None:
         """The current now-playing artwork (PNG), or None when there is none."""
         try:

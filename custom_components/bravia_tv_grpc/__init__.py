@@ -137,6 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.applied_manual_port = manual_port
     await _ensure_device_info(hass, entry, creds, device_id, coordinator)
     _remove_other_picture_entities(hass, entry, coordinator.rest_writable)
+    _remove_retired_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.agent_entities_created = coordinator.agent_expected
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -248,6 +249,22 @@ def _remove_other_picture_entities(
     )
     if ps_id:
         registry.async_remove(ps_id)
+
+
+def _remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop entities of features that were removed, so none are orphaned.
+
+    The Living Decor theme select (removed in 0.4.2): the TV only lists the
+    three most recently used themes to other apps, so it could never offer
+    the catalogue.
+    """
+    registry = er.async_get(hass)
+    root = entry.unique_id or entry.entry_id
+    entity_id = registry.async_get_entity_id(
+        "select", DOMAIN, f"{root}_agent_living_decor_theme"
+    )
+    if entity_id:
+        registry.async_remove(entity_id)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

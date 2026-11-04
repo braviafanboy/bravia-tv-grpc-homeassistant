@@ -74,7 +74,6 @@ def _diagnostics(
             "pinned_fingerprint": coordinator.agent.fingerprint
             if coordinator.agent
             else None,
-            "themes": [t.get("id") for t in coordinator.agent_themes],
             "rest": coordinator.agent_value("rest"),
             "picture_targets": sorted(
                 (coordinator.agent_value("picture", "targets") or {}).keys()

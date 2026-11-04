@@ -71,7 +71,6 @@ command is an error rather than a silent no-op.
 | `seek` | `media_player` seek | Absolute position in seconds; needs an app with an active media session |
 | `channel` | `media_player.play_media`, `media_content_type: channel` | Tunes the built-in tuner to a channel number |
 | `application.deep_link` | `media_player.play_media`, `media_content_type: url` | Opens the URL in its app. YouTube, Netflix, Disney+, Prime Video, Spotify, Twitch and Apple TV are recognised by host; otherwise pass `extra: {package_name: …}` |
-| `select_media` | `media_player.play_media`, `media_content_type: theme` | Shows a Living Decor theme, for example `theme://skyview` |
 | `search` | `bravia_tv_grpc.search` service | Shows Sony's on-screen search results for a query; `play: true` plays the best match |
 | `speaker_type` | `select` Speaker Type | TV or audio system; disabled by default as it overlaps Speakers |
 | `access_shortcut` | `switch` Accessibility Service | Turns the service on the TV's accessibility shortcut (TalkBack by default) on or off. Works only after the shortcut has been set up once by holding **Mute** for 3 seconds. Optimistic and disabled by default |
@@ -83,9 +82,9 @@ changes for them, so the cloud state is also polled every five minutes; a
 sleep timer set with the remote shows up within that time.
 
 Verified on a BRAVIA 8 II: the sleep timer, Picture Off, playback, seek, deep
-links, Living Decor themes, search, speaker type and standby power-on all
-execute and report back within a second or two. Channel tuning reaches the
-tuner but was not tested with channels installed. On other models,
+links, search, speaker type and standby power-on all execute and report back
+within a second or two. Channel tuning reaches the tuner but was not tested
+with channels installed. On other models,
 `tools/cloud_command_probe.py caps` shows what the TV advertises.
 
 ## HA TV Agent
@@ -101,7 +100,6 @@ installed on the TV, the device gains:
 | `binary_sensor` Remote connected | Bluetooth connection state | Diagnostic |
 | `binary_sensor` Panel | Display state | Off during *Picture Off* while the TV stays on |
 | `media_player` now playing | The foreground app's media session | Title, artist, album, position, duration, artwork and play state; needs Notification access |
-| `select` Living Decor theme | The Living Decor app's theme list | Disabled by default; needs the cloud `select_media` capability |
 | `sensor` Wi-Fi signal and link speed | WifiManager | Diagnostic, disabled by default |
 | `button` Agent setup | | Walks through any missing permission prompts on the TV |
 | `update` HA TV Agent | The agent's release manifest | Installs a new agent version, with one confirmation on the TV |
