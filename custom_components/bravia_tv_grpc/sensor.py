@@ -191,14 +191,16 @@ async def async_setup_entry(
         if not coordinator.rest_writable:
             entities.append(BraviaTvPowerSavingSensor(coordinator))
     async_add_entities(entities)
-    if not coordinator.rest_writable:
+    writable = coordinator.rest_writable
+
+    def _picture_sensor(c: BraviaTvCoordinator, target: str, kind: str | None):
+        # Point lists (multi-point white balance) are read-only either way.
+        if kind == picture.KIND_POINTS:
+            return BraviaTvPicturePointsSensor(c, target)
         # Without the IP-control key the picture settings are read-only.
-        async_add_picture_entities(
-            coordinator,
-            entry,
-            async_add_entities,
-            lambda c, target, kind: BraviaTvPictureSensor(c, target, kind),
-        )
+        return None if writable else BraviaTvPictureSensor(c, target, kind)
+
+    async_add_picture_entities(coordinator, entry, async_add_entities, _picture_sensor)
 
 
 class BraviaTvVideoSignalSensor(BraviaTvEntity, SensorEntity):
@@ -567,6 +569,44 @@ class BraviaTvPictureSensor(BraviaTvPictureEntity, SensorEntity):
                 return int(number)
             return number
         return self.raw_value
+
+
+class BraviaTvPicturePointsSensor(BraviaTvPictureEntity, SensorEntity):
+    """A picture setting holding a list of values, such as the 20-point white
+    balance offsets: shown read-only (state lists the values; the
+    ``points`` attribute has them as numbers, with the allowed range)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: BraviaTvCoordinator, target: str) -> None:
+        super().__init__(coordinator, target)
+        root = coordinator.config_entry.unique_id or coordinator.config_entry.entry_id
+        # Its own id space: the read-only/controls swap must never remove it.
+        self._attr_unique_id = f"{root}_agent_picturepoints_{target}"
+
+    def _points(self) -> list[float] | None:
+        return picture.points(self.raw_value)
+
+    @property
+    def native_value(self) -> str | None:
+        values = self._points()
+        if values is None:
+            return None
+        return ", ".join(str(int(v)) if v.is_integer() else str(v) for v in values)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        values = self._points()
+        attrs: dict[str, Any] = {
+            "points": [int(v) if v.is_integer() else v for v in values]
+            if values is not None
+            else None
+        }
+        rng = picture.range_of(self.info)
+        if rng:
+            attrs["min"] = rng.get("min")
+            attrs["max"] = rng.get("max")
+        return attrs
 
 
 class BraviaTvPowerSavingSensor(BraviaTvAgentEntity, SensorEntity):

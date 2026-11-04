@@ -133,6 +133,10 @@ keep their gRPC entities.
 - **Classification.** A setting with a range becomes a `number`, an on/off
   setting a `switch`, and a list of values a `select` with readable labels.
   Without the IP control key they are read-only `sensor`s instead.
+- **Multi-point white balance.** The red, green and blue offsets hold one
+  value per point (20 on a BRAVIA 8 II). They are always read-only diagnostic
+  sensors: the state lists the values, and the `points`, `min` and `max`
+  attributes give them as numbers with the allowed range.
 - **Everything is enabled.** Disable the entities you do not use; fewer
   enabled settings means less work for the TV at short poll intervals.
 - **Refresh.** The TV announces no picture-setting change, so the agent

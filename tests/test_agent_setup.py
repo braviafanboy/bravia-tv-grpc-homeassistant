@@ -182,3 +182,21 @@ async def test_retired_living_decor_select_is_removed(hass: HomeAssistant):
     )
     _remove_retired_entities(hass, entry)
     assert registry.async_get(old.entity_id) is None
+
+
+async def test_retired_offset_numbers_are_removed(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.bravia_tv_grpc import _remove_retired_entities
+
+    entry, _coordinator = _setup(hass, token="tok")
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "number", DOMAIN, "dev_agent_picture_redOffset", config_entry=entry
+    )
+    keep = registry.async_get_or_create(
+        "number", DOMAIN, "dev_agent_picture_redGain", config_entry=entry
+    )
+    _remove_retired_entities(hass, entry)
+    assert registry.async_get(old.entity_id) is None
+    assert registry.async_get(keep.entity_id) is not None

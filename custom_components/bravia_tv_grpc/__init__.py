@@ -256,15 +256,21 @@ def _remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     The Living Decor theme select (removed in 0.4.2): the TV only lists the
     three most recently used themes to other apps, so it could never offer
-    the catalogue.
+    the catalogue. The white balance offset numbers (replaced in 0.4.3).
     """
     registry = er.async_get(hass)
     root = entry.unique_id or entry.entry_id
-    entity_id = registry.async_get_entity_id(
-        "select", DOMAIN, f"{root}_agent_living_decor_theme"
-    )
-    if entity_id:
-        registry.async_remove(entity_id)
+    retired = [("select", f"{root}_agent_living_decor_theme")]
+    # The white balance offsets are 20-point lists: they were number (or plain
+    # sensor) entities that could never show or set them; since 0.4.3 they are
+    # read-only point sensors with their own unique ids.
+    for colour in ("red", "green", "blue"):
+        for domain in ("number", "sensor"):
+            retired.append((domain, f"{root}_agent_picture_{colour}Offset"))
+    for domain, unique_id in retired:
+        entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+        if entity_id:
+            registry.async_remove(entity_id)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

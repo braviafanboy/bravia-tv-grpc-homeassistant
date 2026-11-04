@@ -43,3 +43,22 @@ def test_numeric():
     assert picture.numeric("90") == 90
     assert picture.numeric("") is None
     assert picture.numeric(None) is None
+
+
+def test_point_lists_are_their_own_kind():
+    offsets = {
+        "value": "[-2, 0, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]",
+        "available": True,
+        "candidates": [{"min": -50, "max": 50, "step": 1}],
+    }
+    assert picture.kind_of("redOffset", offsets) == picture.KIND_POINTS
+    assert picture.points(offsets["value"])[:3] == [-2.0, 0.0, -2.0]
+    assert len(picture.points(offsets["value"])) == 20
+    assert picture.range_of(offsets) == {"min": -50, "max": 50, "step": 1}
+    # A plain number stays a number; junk and non-numeric lists are not points.
+    assert (
+        picture.kind_of("contrast", {**offsets, "value": "90"}) == picture.KIND_NUMBER
+    )
+    assert picture.points("[1, 2") is None
+    assert picture.points('["a"]') is None
+    assert picture.points(None) is None

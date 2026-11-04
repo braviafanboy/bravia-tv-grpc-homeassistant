@@ -7,12 +7,16 @@ kind a target becomes and how it is named.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 KIND_NUMBER = "number"
 KIND_SWITCH = "switch"
 KIND_SELECT = "select"
+# A list of values, e.g. multi-point white balance offsets (20 points each).
+# Shown read-only; one number entity cannot hold it.
+KIND_POINTS = "points"
 
 # Owned by gRPC (pushed, already entities); never duplicated from REST.
 EXCLUDED = frozenset({"brightness", "pictureMode"})
@@ -87,6 +91,8 @@ def kind_of(target: str, info: dict[str, Any] | None) -> str | None:
     """The entity kind for ``target``, or None while it cannot be told."""
     if target in EXCLUDED:
         return None
+    if points((info or {}).get("value")) is not None:
+        return KIND_POINTS
     candidates = (info or {}).get("candidates") or []
     if _range(candidates):
         return KIND_NUMBER
@@ -119,6 +125,26 @@ def select_options(target: str, info: dict[str, Any] | None) -> list[str]:
     if not values and target in _FALLBACK and isinstance(_FALLBACK[target][1], list):
         values = list(_FALLBACK[target][1])
     return values
+
+
+def points(value: Any) -> list[float] | None:
+    """The TV's list value (``"[-2, 0, …]"``) as numbers, or None if not a list."""
+    if not isinstance(value, str) or not value.lstrip().startswith("["):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    if not isinstance(parsed, list) or not all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in parsed
+    ):
+        return None
+    return [float(v) for v in parsed]
+
+
+def range_of(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The reported numeric range (min/max/step) of a target, if any."""
+    return _range((info or {}).get("candidates") or [])
 
 
 def numeric(value: Any) -> float | None:
