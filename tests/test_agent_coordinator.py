@@ -292,14 +292,15 @@ async def test_pairs_via_local_launch_when_no_token(hass: HomeAssistant):
     await coordinator.async_shutdown()
 
 
-async def test_pairs_via_cloud_deep_link_first(hass: HomeAssistant):
+async def test_never_pairs_through_the_cloud_deep_link(hass: HomeAssistant):
+    """The cloud link put the token through Sony's service and into the TV's
+    system log; pairing is local only, even when the cloud link exists."""
     entry = _entry(hass)
     fakes: list[FakeAgent] = []
     sent: list[dict] = []
 
     async def fake_cloud(name, commands):
         sent.append(commands[0])
-        fakes[0].reject_token = None  # the agent adopted whatever we delivered
         return {}
 
     with (
@@ -309,15 +310,17 @@ async def test_pairs_via_cloud_deep_link_first(hass: HomeAssistant):
         ),
     ):
         coordinator = await _start(
-            hass, entry, fakes, cloud_caps={"application.deep_link": ("post",)}
+            hass,
+            entry,
+            fakes,
+            cloud_caps={"application.deep_link": ("post",)},
+            configure=lambda f: f.pair_tokens.append("local"),
         )
-        fake = fakes[0]
-        await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) is not None)
-    assert sent and sent[0]["name"] == "application.deep_link"
-    uri = sent[0]["args"]["uri"] if "args" in sent[0] else sent[0]["uri"]
-    assert uri.startswith("braviaagent://pair?token=")
-    assert entry.data[CONF_AGENT_TOKEN] == fake.token
-    coordinator.client.exec_command.assert_not_called()
+        await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "local")
+    coordinator.client.exec_command.assert_any_call(
+        "system_setting.application", agentmod.AGENT_PACKAGE
+    )
+    assert not [c for c in sent if c["name"] == "application.deep_link"]
     await coordinator.async_shutdown()
 
 

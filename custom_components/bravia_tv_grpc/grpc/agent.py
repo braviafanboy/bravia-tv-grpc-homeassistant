@@ -12,7 +12,6 @@ import base64
 from collections.abc import AsyncIterator, Callable, Iterable
 import hashlib
 import json
-import secrets
 import ssl
 from typing import Any
 
@@ -65,18 +64,6 @@ class AgentRequestError(AgentError):
         super().__init__(f"{code} (HTTP {status})")
         self.code = code
         self.status = status
-
-
-def new_token() -> str:
-    """A fresh bearer token for cloud delivery (64 hex chars, like the agent's)."""
-    return secrets.token_hex(32)
-
-
-def pair_deep_link(token: str, name: str) -> str:
-    """The ``braviaagent://pair`` URI that makes the agent adopt ``token``."""
-    return (
-        f"braviaagent://pair?token={token}&name={aiohttp.helpers.quote(name, safe='')}"
-    )
 
 
 SETUP_DEEP_LINK = "braviaagent://setup"

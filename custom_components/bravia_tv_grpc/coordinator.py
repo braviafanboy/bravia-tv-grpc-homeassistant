@@ -366,8 +366,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Best effort and never raises: without an agent the integration is
         unchanged. With one, the entry's stored token is tried first; if there
-        is none or it is rejected, pairing runs (cloud deep link, else local
-        app launch + pairing window) as soon as the TV is on.
+        is none or it is rejected, pairing runs (local app launch + pairing
+        window) as soon as the TV is on.
         """
         host = self._entry.data.get("host")
         if not host or self._agent_task is not None:
@@ -828,11 +828,13 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_agent_pair(self) -> bool:
         """Obtain a bearer token from the agent and persist it.
 
-        Prefers the Sony cloud deep link (delivers our token straight to the
-        agent, no window). Falls back to launching the agent through the local
-        gRPC app launch, which opens its 60 s pairing window, and POSTing
-        /v1/pair until it answers. Rate-limited so a broken agent cannot keep
-        launching itself on the TV.
+        Launch the agent through the gRPC app launch, which opens its 60 s
+        pairing window, and POST /v1/pair until it answers; the token only
+        ever travels over the TLS connection. (Pairing through the Sony cloud
+        deep link was removed: it needs the same LAN path to verify the token,
+        so it never helped when this fails, and it sent the token through
+        Sony's service and into the TV's system log.) Rate-limited so a broken
+        agent cannot keep launching itself on the TV.
         """
         assert self.agent is not None
         client = self.agent
@@ -842,62 +844,13 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._agent_last_pair = now
         # Pairing means the previous relationship is over: any pinned
         # certificate belongs to that earlier life and would make the
-        # verification of a cloud-delivered token fail for the wrong reason.
+        # verification of a newly paired token fail for the wrong reason.
         if client.pinned:
             await self._async_unpin_agent(client)
-        token: str | None = None
-        if self.cloud_supports(_AGENT_DEEP_LINK, "post"):
-            candidate = agentmod.new_token()
-            try:
-                await self.async_cloud_command(
-                    _AGENT_DEEP_LINK,
-                    [
-                        cloud.post_command(
-                            _AGENT_DEEP_LINK,
-                            {
-                                "package_name": agentmod.AGENT_PACKAGE,
-                                "uri": agentmod.pair_deep_link(
-                                    candidate, AGENT_CLIENT_NAME
-                                ),
-                            },
-                        )
-                    ],
-                )
-                client.token = candidate
-                await client.async_state()
-                token = candidate
-            except (HomeAssistantError, agentmod.AgentError) as err:
-                _LOGGER.warning(
-                    "HA TV Agent pairing via the cloud deep link failed (%s); "
-                    "falling back to launching the agent on the TV",
-                    err,
-                )
-                client.token = None
+        token = await self._async_agent_pair_local(client)
         if token is None:
-            if not self.cloud_supports(_AGENT_DEEP_LINK, "post"):
-                _LOGGER.info(
-                    "HA TV Agent pairing: cloud deep link not available, "
-                    "launching the agent on the TV for its pairing window"
-                )
-            try:
-                await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
-            except HomeAssistantError as err:
-                _LOGGER.warning("could not launch the HA TV Agent for pairing: %s", err)
-                return False
-            deadline = self.hass.loop.time() + _AGENT_PAIR_WINDOW
-            while self.hass.loop.time() < deadline:
-                await asyncio.sleep(2)
-                try:
-                    token = await client.async_pair(AGENT_CLIENT_NAME)
-                    break
-                except agentmod.AgentPairingClosed:
-                    continue
-                except agentmod.AgentError as err:
-                    _LOGGER.debug("agent pair attempt failed: %s", err)
-            if token is None:
-                _LOGGER.warning("HA TV Agent pairing window closed without a token")
-                client.token = None
-                return False
+            client.token = None
+            return False
         # Pin the certificate the pairing conversation ran over: from here on
         # the agent must present exactly this one.
         self.hass.config_entries.async_update_entry(
@@ -906,6 +859,25 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_pin_agent_certificate()
         _LOGGER.info("paired with the HA TV Agent")
         return True
+
+    async def _async_agent_pair_local(self, client: agentmod.AgentClient) -> str | None:
+        """Launch the agent (opens its pairing window) and claim a token."""
+        try:
+            await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
+        except HomeAssistantError as err:
+            _LOGGER.warning("could not launch the HA TV Agent for pairing: %s", err)
+            return None
+        deadline = self.hass.loop.time() + _AGENT_PAIR_WINDOW
+        while self.hass.loop.time() < deadline:
+            await asyncio.sleep(2)
+            try:
+                return await client.async_pair(AGENT_CLIENT_NAME)
+            except agentmod.AgentPairingClosed:
+                continue
+            except agentmod.AgentError as err:
+                _LOGGER.debug("agent pair attempt failed: %s", err)
+        _LOGGER.warning("HA TV Agent pairing window closed without a token")
+        return None
 
     async def _async_unpin_agent(self, client: agentmod.AgentClient) -> None:
         client.token = None

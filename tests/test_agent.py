@@ -37,17 +37,6 @@ def test_parse_sse_crlf_and_no_space_after_colon():
     assert events == [("state", '{"x":2}')]
 
 
-def test_pair_deep_link_encodes_name():
-    uri = agent.pair_deep_link("ab" * 32, "Home Assistant")
-    assert uri == "braviaagent://pair?token=" + "ab" * 32 + "&name=Home%20Assistant"
-
-
-def test_new_token_is_64_hex():
-    tok = agent.new_token()
-    assert len(tok) == 64
-    assert int(tok, 16) >= 0
-
-
 def test_state_blocks_fills_missing_with_none():
     blocks = agent.state_blocks({"environment": {"illuminance_lx": 3}, "junk": 1})
     assert blocks["environment"] == {"illuminance_lx": 3}
