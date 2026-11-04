@@ -42,7 +42,7 @@ _LABELS = {
     "contentType": "Content type",
     "digitalNoiseReduction": "Digital noise reduction",
     "hdmiSignalFormat": "HDMI signal format",
-    "hdmiSignalFormatVrr": "HDMI signal format VRR",
+    "hdmiSignalFormatVrr": "HDMI signal format/VRR",
     "hdmiVideoRange": "HDMI video range",
     "hdrMode": "HDR mode",
     "hdrToneMapping": "HDR tone mapping",
