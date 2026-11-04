@@ -280,8 +280,7 @@ itself, so nothing extra is exposed on your network.
   numbers, switches and selects, and power saving becomes a select. Clearing
   the key turns them back into sensors. The key is stored in the config entry
   next to the gRPC credentials and handed to the agent, which keeps it on the
-  TV. (Sony's PIN-based "Normal" authentication only works on Japanese
-  models, so the pre-shared key is the way in elsewhere.)
+  TV.
 - **Everything is enabled.** Try the settings and disable the entities you do
   not use: fewer enabled settings means less polling at short intervals.
 - **Refresh.** Nothing on the TV announces a picture-setting change, so the
