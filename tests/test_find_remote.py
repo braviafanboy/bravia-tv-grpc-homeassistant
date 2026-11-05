@@ -63,6 +63,11 @@ async def test_beeping_succeeds(hass: HomeAssistant, outcome):
         ("failed", "remote_finder_failed"),
         ("something_new", "remote_finder_failed"),
         (agentmod.AgentError("down"), "agent_offline"),
+        (
+            agentmod.AgentRequestError("not_found", 404),
+            "remote_finder_needs_agent_update",
+        ),
+        (agentmod.AgentRequestError("busy", 500), "remote_finder_failed"),
     ],
 )
 async def test_failures_are_explained(hass: HomeAssistant, outcome, key):

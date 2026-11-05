@@ -90,6 +90,9 @@
     },
     "remote_finder_failed": {
       "message": "{name} couldn't reach the remote over Bluetooth. It may be out of range or its batteries flat."
+    },
+    "remote_finder_needs_agent_update": {
+      "message": "Find remote needs HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
     }
   },
   "entity": {
