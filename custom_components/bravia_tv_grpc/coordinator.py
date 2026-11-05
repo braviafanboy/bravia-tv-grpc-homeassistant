@@ -667,6 +667,30 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_placeholders={"name": self.device_name},
             ) from err
 
+    async def async_find_remote(self) -> None:
+        """Make the remote beep through the agent; raises a translated error."""
+        agent = self._require_agent()
+        try:
+            state = await agent.async_find_remote()
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+        if state in ("ringing", "found"):
+            return
+        key = {
+            "unsupported": "remote_finder_unsupported",
+            "no_remote": "remote_finder_no_remote",
+            "no_permission": "remote_finder_no_permission",
+        }.get(state, "remote_finder_failed")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=key,
+            translation_placeholders={"name": self.device_name},
+        )
+
     def _hdr_changed(self, value: Any) -> bool:
         """True when the video's dynamic range class changes (SDR ↔ HDR10 ↔
         Dolby Vision …). No video signal counts as SDR: the TV uses its SDR
