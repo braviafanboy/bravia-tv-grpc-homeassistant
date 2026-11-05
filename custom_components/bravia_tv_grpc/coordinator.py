@@ -34,6 +34,7 @@ from .bravia_tv_client import BraviaTvGrpcClient
 from .const import (
     AGENT_CLIENT_NAME,
     AGENT_MIN_VERSION,
+    AGENT_VERSION,
     CONF_AGENT_CERT,
     CONF_AGENT_FINGERPRINT,
     CONF_AGENT_MANIFEST_URL,
@@ -666,6 +667,46 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_key="agent_offline",
                 translation_placeholders={"name": self.device_name},
             ) from err
+
+    async def async_find_remote(self) -> None:
+        """Make the remote beep through the agent; raises a translated error."""
+        agent = self._require_agent()
+        try:
+            state = await agent.async_find_remote()
+        except agentmod.AgentRequestError as err:
+            if err.status != 404:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="remote_finder_failed",
+                    translation_placeholders={"name": self.device_name},
+                ) from err
+            # An agent from before Find remote: it doesn't know the endpoint.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="remote_finder_needs_agent_update",
+                translation_placeholders={
+                    "name": self.device_name,
+                    "required": AGENT_VERSION,
+                },
+            ) from err
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+        if state in ("ringing", "found"):
+            return
+        key = {
+            "unsupported": "remote_finder_unsupported",
+            "no_remote": "remote_finder_no_remote",
+            "no_permission": "remote_finder_no_permission",
+        }.get(state, "remote_finder_failed")
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=key,
+            translation_placeholders={"name": self.device_name},
+        )
 
     def _hdr_changed(self, value: Any) -> bool:
         """True when the video's dynamic range class changes (SDR ↔ HDR10 ↔

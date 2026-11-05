@@ -20,7 +20,12 @@ async def async_setup_entry(
 ) -> None:
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
     if coordinator.agent_expected:
-        async_add_entities([BraviaTvAgentSetupButton(coordinator)])
+        async_add_entities(
+            [
+                BraviaTvAgentSetupButton(coordinator),
+                BraviaTvFindRemoteButton(coordinator),
+            ]
+        )
 
 
 class BraviaTvAgentSetupButton(BraviaTvAgentEntity, ButtonEntity):
@@ -41,3 +46,16 @@ class BraviaTvAgentSetupButton(BraviaTvAgentEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_agent_setup()
+
+
+class BraviaTvFindRemoteButton(BraviaTvAgentEntity, ButtonEntity):
+    """Makes the TV's remote beep, as the TV's own Find remote does (through
+    the HA TV Agent, over Bluetooth). Works while the TV is on."""
+
+    _attr_translation_key = "find_remote"
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "remote_finder", "find_remote")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_find_remote()

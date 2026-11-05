@@ -33,6 +33,7 @@ BLOCKS = (
     "rest",
     "picture",
     "power_saving",
+    "remote_finder",
 )
 _INFO_TIMEOUT = 4
 _REQUEST_TIMEOUT = 8
@@ -391,6 +392,14 @@ class AgentClient:
         except (TimeoutError, aiohttp.ClientError, OSError) as err:
             raise self._wrap(err, path) from err
         return data if isinstance(data, dict) else {}
+
+    async def async_find_remote(self) -> str:
+        """``POST /v1/remote/find``: beep the remote. Returns the agent's
+        outcome (ringing, found, unsupported, no_remote, no_permission, failed)."""
+        data = await self._request(
+            "POST", "/v1/remote/find", timeout=_REQUEST_TIMEOUT * 3
+        )
+        return str(data.get("state") or "failed")
 
     async def async_picture_refresh(self) -> None:
         """``POST /v1/picture/refresh``: re-read the REST picture settings now."""

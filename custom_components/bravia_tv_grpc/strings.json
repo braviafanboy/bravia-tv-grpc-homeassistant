@@ -78,6 +78,21 @@
     },
     "picture_write_refused": {
       "message": "{name} refused the picture setting change ({code})."
+    },
+    "remote_finder_unsupported": {
+      "message": "The remote paired with {name} has no beeper (Find remote isn't supported by it)."
+    },
+    "remote_finder_no_remote": {
+      "message": "No Sony remote is paired with {name} over Bluetooth."
+    },
+    "remote_finder_no_permission": {
+      "message": "The HA TV Agent on {name} needs the Bluetooth permission to find the remote. Press Agent setup and accept the prompt on the TV."
+    },
+    "remote_finder_failed": {
+      "message": "{name} couldn't reach the remote over Bluetooth. It may be out of range or its batteries flat."
+    },
+    "remote_finder_needs_agent_update": {
+      "message": "Find remote needs HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
     }
   },
   "entity": {
@@ -359,6 +374,9 @@
     "button": {
       "agent_setup": {
         "name": "Agent setup"
+      },
+      "find_remote": {
+        "name": "Find remote"
       }
     }
   },
