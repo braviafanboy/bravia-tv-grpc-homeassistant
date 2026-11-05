@@ -32,6 +32,7 @@ import voluptuous as vol
 
 from .const import (
     CONF_AGENT_MANIFEST_URL,
+    CONF_AGENT_UPDATE_CHECKS,
     CONF_DEVICE_UNIQUE_ID,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
@@ -39,6 +40,7 @@ from .const import (
     CONF_PICTURE_EVENT_REFRESH,
     CONF_PICTURE_POLL_S,
     CONF_REST_PSK,
+    DEFAULT_AGENT_UPDATE_CHECKS,
     DEFAULT_PICTURE_EVENT_REFRESH,
     DEFAULT_PICTURE_POLL_S,
     DOMAIN,
@@ -304,6 +306,11 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
             return self.async_create_entry(
                 data={
                     CONF_GRPC_PORT: user_input.get(CONF_GRPC_PORT) or 0,
+                    CONF_AGENT_UPDATE_CHECKS: bool(
+                        user_input.get(
+                            CONF_AGENT_UPDATE_CHECKS, DEFAULT_AGENT_UPDATE_CHECKS
+                        )
+                    ),
                     CONF_AGENT_MANIFEST_URL: (
                         user_input.get(CONF_AGENT_MANIFEST_URL) or ""
                     ).strip(),
@@ -325,6 +332,12 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_GRPC_PORT, default=current): vol.All(
                     vol.Coerce(int), vol.Range(min=0, max=65535)
                 ),
+                vol.Optional(
+                    CONF_AGENT_UPDATE_CHECKS,
+                    default=options.get(
+                        CONF_AGENT_UPDATE_CHECKS, DEFAULT_AGENT_UPDATE_CHECKS
+                    ),
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_AGENT_MANIFEST_URL,
                     default=options.get(CONF_AGENT_MANIFEST_URL, ""),

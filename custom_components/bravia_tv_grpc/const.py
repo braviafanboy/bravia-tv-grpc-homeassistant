@@ -48,8 +48,23 @@ DEFAULT_PICTURE_EVENT_REFRESH = True
 # mDNS or a port scan — see grpc_discovery.py.
 GRPC_SERVICE = "jp.co.sony.hes.ssh.controldevice.v1.ControlDeviceService"
 
-# Where the integration looks for new agent releases: a JSON manifest
-# {"version", "url", "sha256", "notes"} published with each release. Options
+# HA TV Agent versions this integration release is paired with. The update
+# entity offers exactly AGENT_VERSION (never "latest"), so agent updates arrive
+# with integration updates and never run ahead of them. Below AGENT_MIN_VERSION
+# a repair explains what does not work. Bump both when releasing a new agent
+# that this integration needs (docs/development.md, "Releases").
+AGENT_VERSION = "0.4.2"
+AGENT_MIN_VERSION = "0.4.2"
+
+# Where the integration reads the paired agent release: the JSON manifest
+# {"version", "url", "sha256", "notes"} published with that release. Options
 # may point it elsewhere (a private repo, or Home Assistant serving the file).
 CONF_AGENT_MANIFEST_URL = "agent_manifest_url"
-DEFAULT_AGENT_MANIFEST_URL = "https://github.com/braviafanboy/bravia-tv-agent/releases/latest/download/agent.json"
+DEFAULT_AGENT_MANIFEST_URL = (
+    "https://github.com/braviafanboy/bravia-tv-agent/releases/download/"
+    f"v{AGENT_VERSION}/agent.json"
+)
+# Whether to check for agent updates at all (no update entity, no requests
+# to GitHub when off).
+CONF_AGENT_UPDATE_CHECKS = "agent_update_checks"
+DEFAULT_AGENT_UPDATE_CHECKS = True

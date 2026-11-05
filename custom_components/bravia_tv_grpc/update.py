@@ -65,7 +65,7 @@ async def async_setup_entry(
     entities: list[UpdateEntity] = []
     if _FW_UPDATE in coordinator.client.capabilities:
         entities.append(BraviaTvFirmwareUpdate(coordinator))
-    if coordinator.agent_expected:
+    if coordinator.agent_expected and coordinator.agent_update_checks:
         entities.append(BraviaTvAgentUpdate(coordinator))
     async_add_entities(entities)
 

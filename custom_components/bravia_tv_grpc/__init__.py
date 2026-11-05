@@ -138,6 +138,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _ensure_device_info(hass, entry, creds, device_id, coordinator)
     _remove_other_picture_entities(hass, entry, coordinator.rest_writable)
     _remove_retired_entities(hass, entry)
+    if not coordinator.agent_update_checks:
+        _remove_agent_update_entity(hass, entry)
+    coordinator.applied_agent_update_checks = coordinator.agent_update_checks
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.agent_entities_created = coordinator.agent_expected
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -251,6 +254,15 @@ def _remove_other_picture_entities(
         registry.async_remove(ps_id)
 
 
+def _remove_agent_update_entity(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Agent update checks are off: no update entity, so none is orphaned."""
+    registry = er.async_get(hass)
+    root = entry.unique_id or entry.entry_id
+    entity_id = registry.async_get_entity_id("update", DOMAIN, f"{root}_agent_update")
+    if entity_id:
+        registry.async_remove(entity_id)
+
+
 def _remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Drop entities of features that were removed, so none are orphaned.
 
@@ -284,6 +296,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     # An agent paired for the first time after setup (the token was just
     # stored): set up again so its entities exist.
     if coordinator.agent_expected and not coordinator.agent_entities_created:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    # Agent update checks add or remove the agent's update entity.
+    if coordinator.agent_update_checks != coordinator.applied_agent_update_checks:
         await hass.config_entries.async_reload(entry.entry_id)
         return
     # The IP-control key decides between read-only picture sensors and

@@ -19,6 +19,7 @@ import logging
 import time
 from typing import Any
 
+from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -32,10 +33,12 @@ from homeassistant.util import dt as dt_util
 from .bravia_tv_client import BraviaTvGrpcClient
 from .const import (
     AGENT_CLIENT_NAME,
+    AGENT_MIN_VERSION,
     CONF_AGENT_CERT,
     CONF_AGENT_FINGERPRINT,
     CONF_AGENT_MANIFEST_URL,
     CONF_AGENT_TOKEN,
+    CONF_AGENT_UPDATE_CHECKS,
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
@@ -43,6 +46,7 @@ from .const import (
     CONF_PICTURE_POLL_S,
     CONF_REST_PSK,
     DEFAULT_AGENT_MANIFEST_URL,
+    DEFAULT_AGENT_UPDATE_CHECKS,
     DEFAULT_PICTURE_EVENT_REFRESH,
     DEFAULT_PICTURE_POLL_S,
     DOMAIN,
@@ -250,6 +254,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cancel_key_renewal: Any = None
         # Latest agent release per the manifest (version/url/sha256/notes).
         self.agent_latest: dict[str, Any] | None = None
+        # The agent-update-checks option as applied at setup (a change reloads).
+        self.applied_agent_update_checks: bool = True
         self._cancel_agent_manifest: Any = None
         # Picture settings over REST (relayed by the agent): the options this
         # coordinator was built with (a key change reloads the entry), whether
@@ -417,10 +423,12 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._agent_task = self._entry.async_create_background_task(
             self.hass, self._async_agent_loop(), name="bravia_tv_agent"
         )
-        await self.async_check_agent_update()
-        self._cancel_agent_manifest = async_track_time_interval(
-            self.hass, self.async_check_agent_update, _AGENT_MANIFEST_INTERVAL
-        )
+        self._update_agent_version_issue()
+        if self.agent_update_checks:
+            await self.async_check_agent_update()
+            self._cancel_agent_manifest = async_track_time_interval(
+                self.hass, self.async_check_agent_update, _AGENT_MANIFEST_INTERVAL
+            )
 
     def _schedule_agent_probe(self) -> None:
         """Keep looking for an agent that is not (yet) answering."""
@@ -466,6 +474,44 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except agentmod.AgentError:
             return
         self._update_agent_permission_issue()
+        self._update_agent_version_issue()
+
+    @property
+    def agent_update_checks(self) -> bool:
+        """Whether the user lets the integration check for agent updates."""
+        return bool(
+            self._entry.options.get(
+                CONF_AGENT_UPDATE_CHECKS, DEFAULT_AGENT_UPDATE_CHECKS
+            )
+        )
+
+    @callback
+    def _update_agent_version_issue(self) -> None:
+        """Raise a repair while the agent is older than this integration needs."""
+        issue_id = f"agent_outdated_{self._entry.entry_id}"
+        installed = self.agent_version
+        outdated = False
+        if installed:
+            try:
+                outdated = AwesomeVersion(installed) < AwesomeVersion(AGENT_MIN_VERSION)
+            except AwesomeVersionException:
+                outdated = False
+        if outdated:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="agent_outdated",
+                translation_placeholders={
+                    "name": self.device_name,
+                    "installed": str(installed),
+                    "required": AGENT_MIN_VERSION,
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     @property
     def agent_version(self) -> str | None:
@@ -473,7 +519,11 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return version if isinstance(version, str) else None
 
     async def async_check_agent_update(self, _now: Any = None) -> None:
-        """Read the release manifest; never raises."""
+        """Read the paired release's manifest; never raises. Does nothing when
+        the user turned agent update checks off."""
+        if not self.agent_update_checks:
+            self.agent_latest = None
+            return
         url = (
             self._entry.options.get(CONF_AGENT_MANIFEST_URL)
             or DEFAULT_AGENT_MANIFEST_URL

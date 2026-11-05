@@ -98,7 +98,15 @@ Assistant and the TV.
 The [HA TV Agent](https://github.com/braviafanboy/bravia-tv-agent) is a small
 app for the TV, part of this project. Install it once with adb, following its
 README. The integration then finds it, pairs with it and adds its entities
-automatically. Updates come through Home Assistant.
+automatically.
+
+Agent updates come through Home Assistant but are never installed on their
+own. Each integration release is paired with one agent version, and an update
+entity offers that version; installing it needs the Install button and a
+confirmation on the TV. Agent updates therefore arrive with integration
+updates, never ahead of them. If the agent is too old for the integration, a
+repair says which version is needed. Checking for agent updates can be turned
+off in the options.
 
 The **Agent setup** button on the TV's device page brings up the permission
 prompts for now-playing and the remote's battery.
@@ -125,7 +133,10 @@ they are re-read.
 - **Picture settings poll interval** and **Refresh picture settings on TV
   events:** how the agent keeps picture settings current.
 - **gRPC port:** set only if discovery fails on your network.
-- **Agent release manifest URL:** where agent updates are fetched from.
+- **Check for HA TV Agent updates:** on by default; off removes the agent's
+  update entity and stops the checks.
+- **Agent release manifest URL:** leave empty for the agent release paired
+  with this integration; set it only to serve the agent from elsewhere.
 
 ## Troubleshooting
 

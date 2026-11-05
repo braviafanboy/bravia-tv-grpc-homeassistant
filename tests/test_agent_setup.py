@@ -200,3 +200,62 @@ async def test_retired_offset_numbers_are_removed(hass: HomeAssistant):
     _remove_retired_entities(hass, entry)
     assert registry.async_get(old.entity_id) is None
     assert registry.async_get(keep.entity_id) is not None
+
+
+def test_manifest_url_is_pinned_to_the_paired_agent_release():
+    from custom_components.bravia_tv_grpc.const import (
+        AGENT_VERSION,
+        DEFAULT_AGENT_MANIFEST_URL,
+    )
+
+    assert "/latest/" not in DEFAULT_AGENT_MANIFEST_URL
+    assert DEFAULT_AGENT_MANIFEST_URL.endswith(f"/download/v{AGENT_VERSION}/agent.json")
+
+
+async def test_outdated_agent_raises_and_clears_a_repair(hass: HomeAssistant):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.bravia_tv_grpc.const import AGENT_MIN_VERSION
+
+    entry, coordinator = _setup(hass, token="tok")
+    issue_id = f"agent_outdated_{entry.entry_id}"
+    registry = ir.async_get(hass)
+    coordinator.agent_info = {"agent": {"version": "0.4.1"}}
+    coordinator._update_agent_version_issue()
+    issue = registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_placeholders["required"] == AGENT_MIN_VERSION
+    coordinator.agent_info = {"agent": {"version": AGENT_MIN_VERSION}}
+    coordinator._update_agent_version_issue()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    # An unparsable or missing version never raises a repair.
+    coordinator.agent_info = {"agent": {"version": "dev-build"}}
+    coordinator._update_agent_version_issue()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_update_checks_off_means_no_entity_and_no_request(hass: HomeAssistant):
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.bravia_tv_grpc import _remove_agent_update_entity
+    from custom_components.bravia_tv_grpc.const import CONF_AGENT_UPDATE_CHECKS
+
+    entry, coordinator = _setup(
+        hass, token="tok", options={CONF_AGENT_UPDATE_CHECKS: False}
+    )
+    assert coordinator.agent_update_checks is False
+    entities = await _platform_entities(hass, entry)
+    assert not [e for e in entities if isinstance(e, update.BraviaTvAgentUpdate)]
+    with patch(
+        "custom_components.bravia_tv_grpc.coordinator.agentmod.async_fetch_manifest",
+        new=AsyncMock(),
+    ) as fetch:
+        await coordinator.async_check_agent_update()
+    fetch.assert_not_awaited()
+    assert coordinator.agent_latest is None
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "update", DOMAIN, "dev_agent_update", config_entry=entry
+    )
+    _remove_agent_update_entity(hass, entry)
+    assert registry.async_get(old.entity_id) is None

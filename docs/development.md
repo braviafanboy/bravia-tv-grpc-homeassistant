@@ -88,6 +88,23 @@ Then re-apply two manual patches, also noted in `requirements-dev.txt`:
    symbol names collide with a co-installed `bravia_quad` integration, which
    uses the same proto package, and whichever loads second fails to import.
 
+## Releases and the paired agent version
+
+Each integration release is paired with one HA TV Agent release
+(`AGENT_VERSION` in `const.py`): the agent's update entity offers exactly that
+version, from that release's `agent.json`, never "latest". `AGENT_MIN_VERSION`
+is the oldest agent the integration works with; an older agent raises the
+`agent_outdated` repair, whose text names what doesn't work.
+
+When an agent release is part of a change:
+
+1. Release the agent first (tag `vX.Y.Z` in bravia-tv-agent; its workflow
+   publishes the APK and `agent.json`).
+2. Set `AGENT_VERSION` to it. Raise `AGENT_MIN_VERSION` only if the
+   integration needs that agent, and update the repair text to say what fails
+   without it.
+3. Release the integration.
+
 ## Testing
 
 Tests live in `tests/` in two tiers:
