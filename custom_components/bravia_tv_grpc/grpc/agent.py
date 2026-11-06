@@ -401,6 +401,23 @@ class AgentClient:
         )
         return str(data.get("state") or "failed")
 
+    async def async_notify(
+        self,
+        message: str,
+        title: str | None = None,
+        duration_s: int | None = None,
+        icon: str | None = None,
+    ) -> dict[str, Any]:
+        """Show a message on the TV screen; returns {"state", "overlay"}."""
+        body: dict[str, Any] = {"message": message}
+        if title:
+            body["title"] = title
+        if duration_s:
+            body["duration_s"] = duration_s
+        if icon:
+            body["icon"] = icon
+        return await self._request("POST", "/v1/notify", body=body)
+
     async def async_picture_refresh(self) -> None:
         """``POST /v1/picture/refresh``: re-read the REST picture settings now."""
         await self._request("POST", "/v1/picture/refresh")

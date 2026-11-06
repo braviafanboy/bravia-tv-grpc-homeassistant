@@ -668,6 +668,32 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_placeholders={"name": self.device_name},
             ) from err
 
+    async def async_notify(
+        self,
+        message: str,
+        title: str | None = None,
+        icon: str | None = None,
+        duration: int | None = None,
+    ) -> None:
+        """Show a message on the TV through the agent; raises a translated error."""
+        agent = self._require_agent()
+        try:
+            result = await agent.async_notify(
+                message, title, duration_s=duration, icon=icon
+            )
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+        if result.get("state") == "notification":
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="notify_no_overlay",
+                translation_placeholders={"name": self.device_name},
+            )
+
     async def async_find_remote(self) -> None:
         """Make the remote beep through the agent; raises a translated error."""
         agent = self._require_agent()

@@ -14,3 +14,44 @@ search:
       default: false
       selector:
         boolean:
+send_notification:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: notify
+  fields:
+    message:
+      required: true
+      example: "Laundry is done"
+      selector:
+        text:
+    title:
+      required: false
+      example: "Home Assistant"
+      selector:
+        text:
+    icon:
+      required: false
+      default: message
+      selector:
+        select:
+          translation_key: notify_icon
+          options:
+            - none
+            - message
+            - alert
+            - info
+            - home
+            - cast
+            - speaker
+            - remote
+    duration:
+      required: false
+      example: 8
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          unit_of_measurement: seconds
+          mode: box

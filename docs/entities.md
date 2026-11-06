@@ -104,6 +104,7 @@ installed on the TV, the device gains:
 | `button` Agent setup | | Walks through any missing permission prompts on the TV |
 | `button` Find remote | The remote's Bluetooth link | Makes the remote beep, as the TV's own Find remote does; press any button on the remote to silence it. Works while the TV is on; needs the Bluetooth permission |
 | `update` HA TV Agent | The agent's release manifest | Installs a new agent version, with one confirmation on the TV |
+| `notify` On-screen message | The agent's overlay on the TV | Shows a message on the TV screen as a banner styled like the TV's own notifications. `notify.send_message` takes a message and title (default icon/duration from the integration's options); the `bravia_tv_grpc.send_notification` action adds an icon and duration. Works while the TV is on; not shown over the Settings menu and other secure screens |
 | Picture settings and power saving | The TV's REST IP control, called by the agent on the TV | See below |
 
 Agent entities are unavailable while the TV is off, since the TV leaves the

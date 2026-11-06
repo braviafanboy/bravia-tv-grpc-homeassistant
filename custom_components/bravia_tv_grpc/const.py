@@ -43,6 +43,25 @@ MAX_PICTURE_POLL_S = 3600
 CONF_PICTURE_EVENT_REFRESH = "picture_event_refresh"
 DEFAULT_PICTURE_EVENT_REFRESH = True
 
+# On-screen notifications (HA TV Agent). The icon keys map to native Sony
+# SystemUI drawables inside the agent; "none" shows no icon.
+NOTIFY_ICON_OPTIONS = [
+    "none",
+    "message",
+    "alert",
+    "info",
+    "home",
+    "cast",
+    "speaker",
+    "remote",
+]
+CONF_NOTIFY_ICON = "notify_icon"
+DEFAULT_NOTIFY_ICON = "message"
+CONF_NOTIFY_DURATION = "notify_duration"
+DEFAULT_NOTIFY_DURATION = 8
+MIN_NOTIFY_DURATION = 1
+MAX_NOTIFY_DURATION = 120
+
 # gRPC service identity (verified on the K-65XR8M2). BRAVIA TVs serve this on a
 # DYNAMIC port that changes across reboots, so it is discovered at runtime via
 # mDNS or a port scan — see grpc_discovery.py.

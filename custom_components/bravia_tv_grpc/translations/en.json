@@ -39,14 +39,18 @@
           "agent_manifest_url": "Agent release manifest URL (blank = the agent release paired with this integration)",
           "rest_psk": "IP control pre-shared key",
           "picture_poll_s": "Picture settings poll interval",
-          "picture_event_refresh": "Refresh picture settings on TV events"
+          "picture_event_refresh": "Refresh picture settings on TV events",
+          "notify_icon": "Default on-screen message icon",
+          "notify_duration": "Default on-screen message duration"
         },
         "data_description": {
           "rest_psk": "Leave empty for read-only picture settings. To change them from Home Assistant, set a key on the TV: in its network settings under IP control, set Authentication to Normal and Pre-Shared Key and enter a Pre-Shared Key, then enter the same key here. Remote device settings → Control remotely must be on. The key is passed to the HA TV Agent on the TV, which uses it locally.",
           "picture_poll_s": "How often the HA TV Agent re-reads the picture settings while the TV is on. 60 s is recommended; shorter intervals put more load on the TV. Every picture setting is enabled by default: disable the entities you do not use.",
           "picture_event_refresh": "Re-read immediately when the picture mode, input, content mode or HDR state changes.",
           "agent_update_checks": "Show an update entity for the HA TV Agent when a new agent is available. Updates are never installed on their own: installing needs the Install button in Home Assistant and a confirmation on the TV. The version offered is the one paired with this integration release, so agent updates arrive together with integration updates. Turn off to stop checking (no requests to GitHub).",
-          "agent_manifest_url": "Leave empty to use the agent release paired with this integration. Set it only to serve the agent from somewhere else, for example a file Home Assistant serves itself."
+          "agent_manifest_url": "Leave empty to use the agent release paired with this integration. Set it only to serve the agent from somewhere else, for example a file Home Assistant serves itself.",
+          "notify_icon": "Icon used by notify.send_message (the simple method). Send notification lets you override it per message.",
+          "notify_duration": "How long notify.send_message banners stay on screen, in seconds."
         }
       }
     }
@@ -93,6 +97,9 @@
     },
     "remote_finder_needs_agent_update": {
       "message": "Find remote needs HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
+    },
+    "notify_no_overlay": {
+      "message": "Shown in the TV's notification panel, not on screen: grant {name}'s HA TV Agent the \"Display over other apps\" permission for an on-screen banner."
     }
   },
   "entity": {
@@ -378,6 +385,11 @@
       "find_remote": {
         "name": "Find remote"
       }
+    },
+    "notify": {
+      "on_screen_message": {
+        "name": "On-screen message"
+      }
     }
   },
   "issues": {
@@ -415,6 +427,42 @@
           "name": "Play",
           "description": "Ask the TV to play the best match instead of showing results (only acts on a confident match)."
         }
+      }
+    },
+    "send_notification": {
+      "name": "Send on-screen notification",
+      "description": "Show a message on the TV screen with a chosen icon and duration (through the HA TV Agent). Works while the TV is on.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "The message text."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Optional bold title above the message."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "Icon shown to the left of the message."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long the banner stays on screen, in seconds (default 8)."
+        }
+      }
+    }
+  },
+  "selector": {
+    "notify_icon": {
+      "options": {
+        "none": "No icon",
+        "message": "Message",
+        "alert": "Alert (bell)",
+        "info": "Information",
+        "home": "Home",
+        "cast": "Cast",
+        "speaker": "Speaker",
+        "remote": "Remote"
       }
     }
   }

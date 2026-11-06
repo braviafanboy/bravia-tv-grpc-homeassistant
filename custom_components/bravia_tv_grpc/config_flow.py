@@ -37,15 +37,22 @@ from .const import (
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
     CONF_GRPC_PORT,
+    CONF_NOTIFY_DURATION,
+    CONF_NOTIFY_ICON,
     CONF_PICTURE_EVENT_REFRESH,
     CONF_PICTURE_POLL_S,
     CONF_REST_PSK,
     DEFAULT_AGENT_UPDATE_CHECKS,
+    DEFAULT_NOTIFY_DURATION,
+    DEFAULT_NOTIFY_ICON,
     DEFAULT_PICTURE_EVENT_REFRESH,
     DEFAULT_PICTURE_POLL_S,
     DOMAIN,
+    MAX_NOTIFY_DURATION,
     MAX_PICTURE_POLL_S,
+    MIN_NOTIFY_DURATION,
     MIN_PICTURE_POLL_S,
+    NOTIFY_ICON_OPTIONS,
 )
 from .grpc.credentials import (
     GrpcNotATvError,
@@ -323,6 +330,12 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                             CONF_PICTURE_EVENT_REFRESH, DEFAULT_PICTURE_EVENT_REFRESH
                         )
                     ),
+                    CONF_NOTIFY_ICON: user_input.get(
+                        CONF_NOTIFY_ICON, DEFAULT_NOTIFY_ICON
+                    ),
+                    CONF_NOTIFY_DURATION: int(
+                        user_input.get(CONF_NOTIFY_DURATION) or DEFAULT_NOTIFY_DURATION
+                    ),
                 }
             )
         options = self.config_entry.options
@@ -365,6 +378,28 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                         CONF_PICTURE_EVENT_REFRESH, DEFAULT_PICTURE_EVENT_REFRESH
                     ),
                 ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_NOTIFY_ICON,
+                    default=options.get(CONF_NOTIFY_ICON, DEFAULT_NOTIFY_ICON),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=NOTIFY_ICON_OPTIONS,
+                        translation_key="notify_icon",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_NOTIFY_DURATION,
+                    default=options.get(CONF_NOTIFY_DURATION, DEFAULT_NOTIFY_DURATION),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_NOTIFY_DURATION,
+                        max=MAX_NOTIFY_DURATION,
+                        step=1,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
