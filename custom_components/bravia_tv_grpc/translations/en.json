@@ -103,6 +103,27 @@
     },
     "notify_needs_agent_update": {
       "message": "On-screen messages need HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
+    },
+    "picture_rest_unavailable": {
+      "message": "{name}'s picture settings are not available (the TV's IP control is not answering). Can't read a picture profile."
+    },
+    "picture_profile_unknown": {
+      "message": "No saved picture profile named '{name}'."
+    },
+    "picture_write_unauthorized": {
+      "message": "Changing {name}'s picture settings needs the IP control pre-shared key in the integration's options. Can't restore a picture profile without it."
+    },
+    "picture_profile_none_selected": {
+      "message": "Choose a picture profile in {name}'s Picture profile dropdown first."
+    },
+    "picture_profile_name_required": {
+      "message": "Type a name in the New profile name box before saving."
+    },
+    "picture_profile_range_mismatch": {
+      "message": "Profile '{name}' was captured in {saved} but {current} is playing now. The TV keeps separate picture settings per dynamic range, so restoring would change the wrong set. Switch to {saved} content, or use the action with Force enabled."
+    },
+    "picture_profile_invalid_name": {
+      "message": "'{name}' can't be used as a profile name. Use a name without slashes or control characters (it becomes the file name)."
     }
   },
   "entity": {
@@ -238,6 +259,9 @@
           "low": "Low",
           "high": "High"
         }
+      },
+      "picture_profile": {
+        "name": "Picture profile"
       }
     },
     "sensor": {
@@ -366,6 +390,9 @@
     "text": {
       "name": {
         "name": "Name"
+      },
+      "picture_profile_name": {
+        "name": "New profile name"
       }
     },
     "update": {
@@ -387,6 +414,15 @@
       },
       "find_remote": {
         "name": "Find remote"
+      },
+      "save_picture_profile": {
+        "name": "Save picture profile"
+      },
+      "restore_picture_profile": {
+        "name": "Restore picture profile"
+      },
+      "delete_picture_profile": {
+        "name": "Delete picture profile"
       }
     },
     "notify": {
@@ -451,6 +487,58 @@
         "duration": {
           "name": "Duration",
           "description": "How long the banner stays on screen, in seconds (default 8)."
+        }
+      }
+    },
+    "save_picture_profile": {
+      "name": "Save picture profile",
+      "description": "Snapshot the TV's current picture settings (basic through 2-point and 20-point adjustments) as a named profile.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "A name for the profile."
+        }
+      }
+    },
+    "restore_picture_profile": {
+      "name": "Restore picture profile",
+      "description": "Write a saved picture profile back to the TV in a few clicks. Sets the profile's picture mode first, then all its settings.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "The profile to restore."
+        },
+        "force": {
+          "name": "Force across dynamic range",
+          "description": "Restore even if the profile was captured in a different dynamic range (SDR/HDR/Dolby Vision) than what is playing. Off by default, since the TV keeps separate picture values per range."
+        }
+      }
+    },
+    "delete_picture_profile": {
+      "name": "Delete picture profile",
+      "description": "Remove a saved picture profile.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "The profile to delete."
+        }
+      }
+    },
+    "list_picture_profiles": {
+      "name": "List picture profiles",
+      "description": "Return the saved picture profiles with their mode, setting count and creation time."
+    },
+    "compare_picture_profiles": {
+      "name": "Compare picture profiles",
+      "description": "Return the picture settings that differ between a profile and another profile, or the TV's current settings.",
+      "fields": {
+        "name": {
+          "name": "Profile",
+          "description": "The profile to compare."
+        },
+        "other": {
+          "name": "Compare with",
+          "description": "Another profile to compare against. Leave blank to compare with the TV's current settings."
         }
       }
     }

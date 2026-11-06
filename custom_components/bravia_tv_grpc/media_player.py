@@ -23,7 +23,7 @@ from homeassistant.components.media_player import (
     MediaType,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
@@ -106,6 +106,40 @@ async def async_setup_entry(
                 vol.Optional("play", default=False): cv.boolean,
             },
             "async_search",
+        )
+    if coordinator.agent_expected:
+        platform = entity_platform.async_get_current_platform()
+        platform.async_register_entity_service(
+            "save_picture_profile",
+            {vol.Required("name"): cv.string},
+            "async_save_picture_profile",
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+        platform.async_register_entity_service(
+            "restore_picture_profile",
+            {
+                vol.Required("name"): cv.string,
+                vol.Optional("force", default=False): cv.boolean,
+            },
+            "async_restore_picture_profile",
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+        platform.async_register_entity_service(
+            "delete_picture_profile",
+            {vol.Required("name"): cv.string},
+            "async_delete_picture_profile",
+        )
+        platform.async_register_entity_service(
+            "list_picture_profiles",
+            {},
+            "async_list_picture_profiles",
+            supports_response=SupportsResponse.ONLY,
+        )
+        platform.async_register_entity_service(
+            "compare_picture_profiles",
+            {vol.Required("name"): cv.string, vol.Optional("other"): cv.string},
+            "async_compare_picture_profiles",
+            supports_response=SupportsResponse.ONLY,
         )
 
 
@@ -423,6 +457,25 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
             )
             return
         await self.coordinator.async_set_field(_APP, media_id)
+
+    async def async_save_picture_profile(self, name: str) -> dict:
+        return await self.coordinator.async_save_picture_profile(name)
+
+    async def async_restore_picture_profile(
+        self, name: str, force: bool = False
+    ) -> dict:
+        return await self.coordinator.async_restore_picture_profile(name, force)
+
+    async def async_delete_picture_profile(self, name: str) -> dict:
+        return await self.coordinator.async_delete_picture_profile(name)
+
+    async def async_list_picture_profiles(self) -> dict:
+        return await self.coordinator.async_list_picture_profiles()
+
+    async def async_compare_picture_profiles(
+        self, name: str, other: str | None = None
+    ) -> dict:
+        return await self.coordinator.async_compare_picture_profile(name, other)
 
     async def async_search(self, query: str, play: bool = False) -> None:
         """Show Sony's on-screen search results for ``query`` (entity service)."""

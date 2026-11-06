@@ -24,6 +24,10 @@ CONF_FW_PENDING = "fw_update_pending"
 # app on the TV that reports lux, now-playing, remote battery, …). Absent until
 # an agent has been discovered and paired.
 CONF_AGENT_TOKEN = "agent_token"
+# Persisted, collision-free slug naming this TV's picture-profile folder under
+# <config>/bravia_picture_profiles/. Set once (from the TV's friendly name) when
+# the TV is linked, then frozen so the folder survives IP/name changes.
+CONF_PROFILE_SLUG = "profile_slug"
 # SHA-256 of the agent's self-signed TLS certificate (DER), learned from the
 # handshake during pairing and pinned on every later connection.
 CONF_AGENT_FINGERPRINT = "agent_fingerprint"

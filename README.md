@@ -127,6 +127,76 @@ The settings then become numbers, switches and selects. Every setting is
 enabled, so disable the ones you don't use. The options also set how often
 they are re-read.
 
+### Picture profiles
+
+Calibrating a TV by hand means nudging dozens of settings, and there is no way
+to A/B two calibrations or get back to a known-good one. Picture profiles let
+you **save the TV's current picture settings** (basic, 2-point and 20-point
+white balance — everything writable) under a name, then **restore** or
+**compare** them in a couple of clicks. Everything lives on the TV's device
+page, no automations required:
+
+- **New profile name** (text) — type a name here.
+- **Save picture profile** (button) — snapshots the current settings under that
+  name; the box then clears.
+- **Picture profile** (dropdown) — your saved profiles; picking one only
+  *selects* it (it does not touch the TV).
+- **Restore picture profile** (button) — writes the selected profile back to
+  the TV. It sets the picture mode first, then only the settings that differ, so
+  a restore is quick.
+- **Delete picture profile** (button) — removes the selected profile.
+
+A typical calibration session: save a *before* profile, make changes, save an
+*after*, then flip between them with the dropdown + Restore to compare them on
+screen.
+
+> Profiles are stored per picture mode and written while the TV is on. Turn the
+> TV's auto-luminance (ambient-light) adjustment off while calibrating and
+> restoring — a restore reports `auto_luminance_on` to remind you.
+>
+> A profile is also tied to the **dynamic range** it was captured in, because
+> contrast, gamma and brightness are separate for SDR and HDR. A profile only
+> restores while matching content is playing (an SDR profile won't apply during
+> HDR, and vice-versa) unless you pass `force`. SDR counts as the default: with
+> no video signal (a menu or the home screen) the TV uses its SDR picture, so
+> **SDR profiles can be saved and restored from a menu** with nothing playing.
+> HDR and Dolby Vision profiles need that content on screen.
+
+#### Where the controls are
+
+Everything is on the TV's device page (Settings → Devices & services → your
+TV), grouped under **Configuration**: the **New profile name** box, **Save**,
+the **Picture profile** dropdown, **Restore** and **Delete**. That's the whole
+save → pick → restore/delete loop — no dashboard needed. Open the dropdown to
+see the selected profile's details (picture mode, dynamic range, model, when
+saved), which it also exposes as attributes.
+
+They're `config`-category entities, so Home Assistant doesn't add them to
+dashboards automatically. If you'd rather keep them on a dashboard — or show a
+profile's Mode / Range / Model inline — add an `entities` card for those
+entities, with `type: attribute` rows on the select for the inline details.
+
+A hand-made file can hold just a subset of settings (e.g. only the 2-point
+white balance): restoring it writes only those values. Omit `picture_mode` and
+the restore won't change the mode; omit `hdr_class` and the dynamic-range check
+is skipped.
+
+#### Where profiles are stored (backup / share)
+
+Each profile is a plain YAML file under
+`config/bravia_picture_profiles/<your tv>/` (the folder is created when the TV
+is added). The folder *is* the store, so there's no separate export/import:
+
+- **Back up** or **version-control** a profile by copying its `.yaml` file.
+- **Share** one by sending the file; the recipient drops it into their own
+  TV's folder and it appears in the dropdown (within a minute, or after a
+  reload).
+- **Move to another TV** by copying the file into that TV's folder.
+
+Use the **File editor**, **Samba share**, **Studio Code Server** or SSH add-on
+to reach the folder. The file name is the profile name. Files are validated on
+read, so a malformed or hand-mangled one is skipped rather than loaded.
+
 ## Options
 
 - **IP control pre-shared key:** enables changing picture settings (see

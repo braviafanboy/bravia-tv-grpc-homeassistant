@@ -24,6 +24,9 @@ async def async_setup_entry(
             [
                 BraviaTvAgentSetupButton(coordinator),
                 BraviaTvFindRemoteButton(coordinator),
+                BraviaTvSaveProfileButton(coordinator),
+                BraviaTvRestoreProfileButton(coordinator),
+                BraviaTvDeleteProfileButton(coordinator),
             ]
         )
 
@@ -59,3 +62,44 @@ class BraviaTvFindRemoteButton(BraviaTvAgentEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_find_remote()
+
+
+class BraviaTvSaveProfileButton(BraviaTvAgentEntity, ButtonEntity):
+    """Saves the TV's current picture settings as a profile, under the name in
+    the New profile name text box. Works while the TV is on."""
+
+    _attr_translation_key = "save_picture_profile"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "save_picture_profile")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_save_picture_profile_from_input()
+
+
+class BraviaTvRestoreProfileButton(BraviaTvAgentEntity, ButtonEntity):
+    """Restores the picture profile chosen in the Picture profile select, writing
+    its settings back to the TV. Works while the TV is on."""
+
+    _attr_translation_key = "restore_picture_profile"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "restore_picture_profile")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_restore_selected_picture_profile()
+
+
+class BraviaTvDeleteProfileButton(BraviaTvAgentEntity, ButtonEntity):
+    """Deletes the picture profile chosen in the Picture profile select."""
+
+    _attr_translation_key = "delete_picture_profile"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "delete_picture_profile")
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_delete_selected_picture_profile()

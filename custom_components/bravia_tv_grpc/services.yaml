@@ -55,3 +55,59 @@ send_notification:
           step: 1
           unit_of_measurement: seconds
           mode: box
+save_picture_profile:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+  fields:
+    name:
+      required: true
+      example: "Calibrated (Professional, SDR)"
+      selector:
+        text:
+restore_picture_profile:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+  fields:
+    name:
+      required: true
+      example: "Calibrated (Professional, SDR)"
+      selector:
+        text:
+    force:
+      required: false
+      default: false
+      selector:
+        boolean:
+delete_picture_profile:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+list_picture_profiles:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+compare_picture_profiles:
+  target:
+    entity:
+      integration: bravia_tv_grpc
+      domain: media_player
+  fields:
+    name:
+      required: true
+      selector:
+        text:
+    other:
+      required: false
+      selector:
+        text:

@@ -29,7 +29,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
+from . import picture_profiles
 from .bravia_tv_client import BraviaTvGrpcClient
 from .const import (
     AGENT_CLIENT_NAME,
@@ -43,8 +45,11 @@ from .const import (
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
+    CONF_MODEL,
+    CONF_MODEL_ID,
     CONF_PICTURE_EVENT_REFRESH,
     CONF_PICTURE_POLL_S,
+    CONF_PROFILE_SLUG,
     CONF_REST_PSK,
     DEFAULT_AGENT_MANIFEST_URL,
     DEFAULT_AGENT_UPDATE_CHECKS,
@@ -94,6 +99,9 @@ _CLOUD_LOAD_TIMEOUT = 15
 # (debounced) schedule, so a slow poll catches changes made with the TV remote
 # (e.g. a sleep timer set on the TV) within a few minutes.
 _CLOUD_POLL_INTERVAL = timedelta(minutes=5)
+# How often to re-scan the picture-profile folder for files added or edited
+# outside HA (gated on a cheap signature, so an unchanged folder is near-free).
+PROFILE_SCAN_INTERVAL = timedelta(seconds=60)
 # Cloud snapshot names mirrored into ``cloud.*`` by the poll: the ones with no
 # local path (everything else is already push-updated locally).
 _CLOUD_POLLED_NAMES = ("sleep_timer", "picture", "playback", "speaker_type")
@@ -263,6 +271,23 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # the key was handed to the agent yet in this lifetime, the debounced
         # gRPC-triggered refresh, and since when IP control is unreachable.
         self.applied_rest_options = rest_options(entry.options)
+        # Profiles live as files under <config>/bravia_picture_profiles/<tv>/.
+        # The folder name (a persisted, collision-free slug) is resolved and the
+        # store built when the TV is linked (async_start).
+        self._picture_profiles: picture_profiles.PictureProfileStore | None = None
+        # A folder re-scan picks up files added/edited outside HA; gated on a
+        # cheap signature so unchanged folders cost one scandir.
+        self._cancel_profile_scan: Any = None
+        self._profiles_signature: tuple = ()
+        self._profile_names: list[str] = []
+        # Lightweight metadata per profile (no settings) for the select's
+        # attributes: {name: {picture_mode, dynamic_range, settings, created}}.
+        self._profile_meta: dict[str, dict[str, Any]] = {}
+        self._selected_profile: str | None = None
+        # Name typed in the "New profile name" text box, consumed by the Save
+        # picture profile button (so the whole save flow lives on the device
+        # page, no Developer Tools).
+        self._profile_name_input: str = ""
         # Whether setup created the agent entities (see agent_expected).
         self.agent_entities_created = False
         self._rest_psk_sent = False
@@ -284,6 +309,21 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         seeded = await self._seed_from_device()
         await self._async_load_cloud(seed_local=not seeded)
         # Deltas arrive on a worker thread; marshal them onto the loop.
+        # Resolve the (persisted, collision-free) profile folder and create it
+        # now the TV is linked, then load it.
+        self._picture_profiles = picture_profiles.PictureProfileStore(
+            self.hass,
+            self.hass.config.path(
+                "bravia_picture_profiles", self._resolve_profile_slug()
+            ),
+        )
+        await self._picture_profiles.async_ensure_dir()
+        await self._load_profiles()
+        self._selected_profile = self._profile_names[0] if self._profile_names else None
+        self._profiles_signature = await self._picture_profiles.async_signature()
+        self._cancel_profile_scan = async_track_time_interval(
+            self.hass, self._async_scan_profiles, PROFILE_SCAN_INTERVAL
+        )
         self.client.start_notify(
             self._on_delta_threadsafe,
             on_connection_lost=self._on_connection_lost,
@@ -708,6 +748,354 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_key="notify_no_overlay",
                 translation_placeholders={"name": self.device_name},
             )
+
+    # ---- picture profiles (backup/restore for manual calibration) ----------
+
+    def _current_picture_targets(self) -> dict:
+        targets = self.agent_value("picture", "targets")
+        return targets if isinstance(targets, dict) else {}
+
+    def _current_hdr_class(self) -> str:
+        """The video's current dynamic-range class ("sdr", "hdr10", "dolby_vision"
+        …); no signal counts as "sdr". The TV keeps separate picture values per
+        class, so a profile is tied to the class it was captured in."""
+        return str(_hdr_type(self._state.get(_SIGNAL_VIDEO)) or "sdr").lower()
+
+    def _grpc_brightness(self) -> str | None:
+        """Current brightness from the authoritative gRPC state, as a string.
+
+        Brightness is a gRPC-owned setting (live-pushed); its REST mirror lags,
+        so a profile must take it from here, not from the REST targets."""
+        value = self._state.get(picture_profiles.GRPC_BRIGHTNESS_PATH)
+        if value is None:
+            return None
+        try:
+            return str(int(float(value)))
+        except (TypeError, ValueError):
+            return None
+
+    def _capture_current_picture(self) -> tuple[str | None, dict[str, str]]:
+        """Capture the picture state for a profile: REST targets from the agent,
+        with the gRPC-owned mode and brightness taken from the live gRPC state
+        (whose REST mirror lags behind remote/menu changes)."""
+        mode, settings = picture_profiles.capture(self._current_picture_targets())
+        grpc_mode = self._state.get(picture_profiles.GRPC_MODE_PATH)
+        if isinstance(grpc_mode, str) and grpc_mode:
+            mode = grpc_mode
+        brightness = self._grpc_brightness()
+        if brightness is not None:
+            settings["brightness"] = brightness
+        return mode, settings
+
+    @property
+    def picture_profile_names(self) -> list[str]:
+        return self._profile_names
+
+    @property
+    def selected_picture_profile(self) -> str | None:
+        return self._selected_profile
+
+    async def async_select_picture_profile(self, name: str) -> None:
+        self._selected_profile = name
+        self.async_set_updated_data(dict(self._state))
+
+    @property
+    def profile_name_input(self) -> str:
+        return self._profile_name_input
+
+    async def async_set_profile_name_input(self, value: str) -> None:
+        """Hold the name typed in the New profile name text box."""
+        self._profile_name_input = value.strip()
+        self.async_set_updated_data(dict(self._state))
+
+    async def async_save_picture_profile_from_input(self) -> dict:
+        """Save the current settings under the typed name (the Save button)."""
+        name = self._profile_name_input.strip()
+        if not name:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_name_required",
+            )
+        result = await self.async_save_picture_profile(name)
+        # Clear the box so the next save starts fresh; the saved name is now
+        # selected in the dropdown.
+        self._profile_name_input = ""
+        self.async_set_updated_data(dict(self._state))
+        return result
+
+    async def async_delete_selected_picture_profile(self) -> dict:
+        """Delete the profile chosen in the select (the Delete button)."""
+        if not self._selected_profile:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_none_selected",
+                translation_placeholders={"name": self.device_name},
+            )
+        return await self.async_delete_picture_profile(self._selected_profile)
+
+    def _resolve_profile_slug(self) -> str:
+        """The persisted name of this TV's profile folder, or a fresh one.
+
+        Seeded from the TV's friendly name and disambiguated against the other
+        config entries' folders (so two same-named TVs get e.g. ``base`` and
+        ``base-2``), then persisted so it never drifts with an IP or name change."""
+        existing = self.config_entry.data.get(CONF_PROFILE_SLUG)
+        if existing:
+            return existing
+        base = slugify(self.device_name) or (
+            self.config_entry.unique_id or self.config_entry.entry_id
+        )
+        taken = {
+            entry.data.get(CONF_PROFILE_SLUG)
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if entry.entry_id != self.config_entry.entry_id
+        }
+        slug, suffix = base, 2
+        while slug in taken:
+            slug = f"{base}-{suffix}"
+            suffix += 1
+        self.hass.config_entries.async_update_entry(
+            self.config_entry,
+            data={**self.config_entry.data, CONF_PROFILE_SLUG: slug},
+        )
+        return slug
+
+    async def _load_profiles(self) -> None:
+        """Refresh the cached profile names and per-profile metadata."""
+        data = await self._picture_profiles.all()
+        self._profile_names = sorted(data)
+        self._profile_meta = {
+            name: {
+                "picture_mode": profile.get("picture_mode"),
+                "dynamic_range": profile.get("hdr_class"),
+                "model": profile.get("model"),
+                "settings": len(profile.get("settings", {})),
+                "created": profile.get("created"),
+            }
+            for name, profile in data.items()
+        }
+
+    async def _refresh_profile_names(self) -> None:
+        await self._load_profiles()
+        if self._selected_profile not in self._profile_names:
+            self._selected_profile = (
+                self._profile_names[0] if self._profile_names else None
+            )
+        # Keep the signature current so our own write doesn't look like an
+        # external change on the next scan tick.
+        self._profiles_signature = await self._picture_profiles.async_signature()
+        self.async_set_updated_data(dict(self._state))
+
+    async def _async_scan_profiles(self, _now: datetime | None = None) -> None:
+        """Re-read the profile folder if it changed on disk (external edits)."""
+        signature = await self._picture_profiles.async_signature()
+        if signature == self._profiles_signature:
+            return
+        self._profiles_signature = signature
+        await self._refresh_profile_names()
+
+    @property
+    def selected_picture_profile_details(self) -> dict[str, Any] | None:
+        """Metadata of the selected profile (for the select's attributes)."""
+        if not self._selected_profile:
+            return None
+        return self._profile_meta.get(self._selected_profile)
+
+    async def async_save_picture_profile(self, name: str) -> dict:
+        """Snapshot the current picture settings as a named profile."""
+        name = name.strip()
+        if not picture_profiles.is_valid_profile_name(name):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_invalid_name",
+                translation_placeholders={"name": name},
+            )
+        if self.agent is None or not self.agent_value("rest", "available"):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_rest_unavailable",
+                translation_placeholders={"name": self.device_name},
+            )
+        mode, settings = self._capture_current_picture()
+        if not settings:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_rest_unavailable",
+                translation_placeholders={"name": self.device_name},
+            )
+        hdr_class = self._current_hdr_class()
+        model = self.config_entry.data.get(CONF_MODEL)
+        profile = {
+            "created": dt_util.utcnow().isoformat(),
+            "picture_mode": mode,
+            "hdr_class": hdr_class,
+            # Recorded so a shared profile says which TV model it came from.
+            "model": model,
+            "model_id": self.config_entry.data.get(CONF_MODEL_ID),
+            "settings": settings,
+        }
+        await self._picture_profiles.put(name, profile)
+        self._selected_profile = name
+        await self._refresh_profile_names()
+        return {
+            "name": name,
+            "picture_mode": mode,
+            "hdr_class": hdr_class,
+            "model": model,
+            "count": len(settings),
+        }
+
+    async def async_restore_picture_profile(
+        self, name: str, force: bool = False
+    ) -> dict:
+        """Write a saved profile back to the TV; returns applied/failed.
+
+        Refuses if the profile's dynamic-range class (SDR/HDR/Dolby Vision) does
+        not match what is playing now, since the TV keeps separate picture values
+        per class — restoring across classes would write the wrong set. Pass
+        ``force`` to do it anyway (e.g. to copy a calibration across classes)."""
+        profile = await self._picture_profiles.get(name)
+        if profile is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_unknown",
+                translation_placeholders={"name": name},
+            )
+        agent = self._require_agent()
+        if not self.agent_value("rest", "write_authorized"):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_write_unauthorized",
+                translation_placeholders={"name": self.device_name},
+            )
+        saved_class = profile.get("hdr_class")
+        current_class = self._current_hdr_class()
+        if not force and saved_class and saved_class != current_class:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_range_mismatch",
+                translation_placeholders={
+                    "name": name,
+                    "saved": saved_class,
+                    "current": current_class,
+                },
+            )
+        targets = self._current_picture_targets()
+        auto_lum = targets.get(picture_profiles.AUTO_LUMINANCE_TARGET, {})
+        auto_on = isinstance(auto_lum, dict) and auto_lum.get("value") not in (
+            None,
+            "off",
+        )
+        mode = profile.get("picture_mode")
+        stored = profile.get("settings", {})
+        try:
+            if mode:
+                await agent.async_set_picture(picture_profiles.MODE_TARGET, mode)
+            # Brightness is gRPC-owned: write it over gRPC, not the REST batch
+            # (the REST brightness mirror is unreliable). Everything else is a
+            # REST target.
+            settings = [
+                {"target": t, "value": v}
+                for t, v in stored.items()
+                if t not in picture_profiles.GRPC_OWNED_REST_TARGETS
+                and t not in picture_profiles.PROFILE_EXCLUDED
+            ]
+            result = await agent.async_picture_batch(settings)
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+        applied = result.get("applied") or 0
+        failed = result.get("failed") or 0
+        if "brightness" in stored:
+            try:
+                brightness = int(float(stored["brightness"]))
+                await self.async_set_field(
+                    picture_profiles.GRPC_BRIGHTNESS_PATH, brightness
+                )
+                applied += 1
+            except (HomeAssistantError, TypeError, ValueError):
+                failed += 1
+        profile_model = profile.get("model")
+        return {
+            "name": name,
+            "picture_mode": mode,
+            "hdr_class": current_class,
+            "model": profile_model,
+            # Soft signal (not a block): the profile was made on another model,
+            # so some targets may not apply (they come back in `failed`).
+            "model_mismatch": bool(
+                profile_model
+                and profile_model != self.config_entry.data.get(CONF_MODEL)
+            ),
+            "applied": applied,
+            "failed": failed,
+            "auto_luminance_on": auto_on,
+            "results": result.get("results"),
+        }
+
+    async def async_restore_selected_picture_profile(self) -> dict:
+        """Restore the profile chosen in the select entity (the restore button)."""
+        if not self._selected_profile:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_none_selected",
+                translation_placeholders={"name": self.device_name},
+            )
+        return await self.async_restore_picture_profile(self._selected_profile)
+
+    async def async_delete_picture_profile(self, name: str) -> dict:
+        removed = await self._picture_profiles.delete(name)
+        if not removed:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_unknown",
+                translation_placeholders={"name": name},
+            )
+        await self._refresh_profile_names()
+        return {"name": name, "removed": True}
+
+    async def async_list_picture_profiles(self) -> dict:
+        data = await self._picture_profiles.all()
+        return {
+            "profiles": {
+                n: {
+                    "created": p.get("created"),
+                    "picture_mode": p.get("picture_mode"),
+                    "count": len(p.get("settings", {})),
+                }
+                for n, p in data.items()
+            }
+        }
+
+    async def async_compare_picture_profile(
+        self, name: str, other: str | None = None
+    ) -> dict:
+        """Diff a profile against another profile, or against the current TV."""
+        profile = await self._picture_profiles.get(name)
+        if profile is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_profile_unknown",
+                translation_placeholders={"name": name},
+            )
+        a = profile.get("settings", {})
+        if other is None:
+            _, b = self._capture_current_picture()
+            other_label = "current"
+        else:
+            op = await self._picture_profiles.get(other)
+            if op is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="picture_profile_unknown",
+                    translation_placeholders={"name": other},
+                )
+            b = op.get("settings", {})
+            other_label = other
+        return {"a": name, "b": other_label, "differences": picture_profiles.diff(a, b)}
 
     async def async_find_remote(self) -> None:
         """Make the remote beep through the agent; raises a translated error."""
@@ -1542,6 +1930,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return ok
 
     async def async_shutdown(self) -> None:
+        if self._cancel_profile_scan is not None:
+            self._cancel_profile_scan()
+            self._cancel_profile_scan = None
         if self._cancel_rest_recheck is not None:
             self._cancel_rest_recheck()
             self._cancel_rest_recheck = None

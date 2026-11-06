@@ -418,6 +418,18 @@ class AgentClient:
             body["icon"] = icon
         return await self._request("POST", "/v1/notify", body=body)
 
+    async def async_picture_batch(
+        self, settings: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        """Apply many picture targets for a profile restore; returns
+        {"applied", "failed", "results": [{"target", "ok", "value"}]}."""
+        return await self._request(
+            "POST",
+            "/v1/picture/batch",
+            body={"settings": settings},
+            timeout=_REQUEST_TIMEOUT * 10,
+        )
+
     async def async_picture_refresh(self) -> None:
         """``POST /v1/picture/refresh``: re-read the REST picture settings now."""
         await self._request("POST", "/v1/picture/refresh")

@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
-from .entity import BraviaTvEntity
+from .entity import BraviaTvAgentEntity, BraviaTvEntity
 
 _FRIENDLY_NAME = "system_setting.friendly_name"
 
@@ -22,8 +22,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up Bravia TV text entities from advertised capabilities."""
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
+    entities: list[TextEntity] = []
     if _FRIENDLY_NAME in coordinator.client.capabilities:
-        async_add_entities([BraviaTvFriendlyNameText(coordinator)])
+        entities.append(BraviaTvFriendlyNameText(coordinator))
+    if coordinator.agent_expected:
+        entities.append(BraviaTvProfileNameText(coordinator))
+    async_add_entities(entities)
 
 
 class BraviaTvFriendlyNameText(BraviaTvEntity, TextEntity):
@@ -45,3 +49,23 @@ class BraviaTvFriendlyNameText(BraviaTvEntity, TextEntity):
 
     async def async_set_value(self, value: str) -> None:
         await self._async_set(value)
+
+
+class BraviaTvProfileNameText(BraviaTvAgentEntity, TextEntity):
+    """A name to save the current picture settings under: type a name here,
+    then press Save picture profile. Cleared automatically after a save."""
+
+    _attr_translation_key = "picture_profile_name"
+    _attr_icon = "mdi:rename-box"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_native_max = 64
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "picture_profile_name")
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.profile_name_input
+
+    async def async_set_value(self, value: str) -> None:
+        await self.coordinator.async_set_profile_name_input(value)

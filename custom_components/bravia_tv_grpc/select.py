@@ -117,6 +117,8 @@ async def async_setup_entry(
             entities.append(BraviaTvCloudSelect(coordinator, name, key, icon, values))
     if coordinator.agent_expected and coordinator.rest_writable:
         entities.append(BraviaTvPowerSavingSelect(coordinator))
+    if coordinator.agent_expected:
+        entities.append(BraviaTvPictureProfileSelect(coordinator))
     async_add_entities(entities)
     if coordinator.rest_writable:
         async_add_picture_entities(
@@ -351,3 +353,57 @@ class BraviaTvPowerSavingSelect(BraviaTvAgentEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         await self.coordinator.async_set_power_saving(option)
+
+
+_RANGE_LABELS = {
+    "sdr": "SDR",
+    "hdr10": "HDR10",
+    "hlg": "HLG",
+    "dolby_vision": "Dolby Vision",
+    "dolbyvision": "Dolby Vision",
+}
+
+
+def _range_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    return _RANGE_LABELS.get(value, friendly_enum_label(value))
+
+
+class BraviaTvPictureProfileSelect(BraviaTvAgentEntity, SelectEntity):
+    """Picks a saved picture profile; the Restore picture profile button writes
+    it to the TV. Options come from the saved profiles (empty until one is saved
+    with the Save picture profile action). Exposes the selected profile's details
+    (picture mode, dynamic range, setting count, when saved) as attributes so a
+    dashboard can show them."""
+
+    _attr_translation_key = "picture_profile"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "picture_profile")
+
+    @property
+    def options(self) -> list[str]:
+        return self.coordinator.picture_profile_names
+
+    @property
+    def current_option(self) -> str | None:
+        return self.coordinator.selected_picture_profile
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        details = self.coordinator.selected_picture_profile_details
+        if not details:
+            return None
+        mode = details.get("picture_mode")
+        return {
+            "picture_mode": friendly_enum_label(mode) if mode else None,
+            "dynamic_range": _range_label(details.get("dynamic_range")),
+            "model": details.get("model"),
+            "settings": details.get("settings"),
+            "saved": details.get("created"),
+        }
+
+    async def async_select_option(self, option: str) -> None:
+        await self.coordinator.async_select_picture_profile(option)
