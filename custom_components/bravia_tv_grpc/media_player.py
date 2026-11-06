@@ -225,14 +225,31 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
     # -- now playing (HA TV Agent) --------------------------------------
     @property
     def _agent_media(self) -> dict | None:
-        """The agent's media block while the TV is on and the agent is online."""
+        """The agent's media block while the TV is on, the agent is online, and
+        the session belongs to the foreground app.
+
+        A backgrounded app can leave a stale (often paused) MediaSession behind;
+        the TV reports the real foreground app in ``system_setting.application``,
+        so a session whose package isn't the current app is ignored rather than
+        shown as now playing."""
         if self._state.get(_POWER) is False or not self.coordinator.agent_online:
             return None
         media = self._state.get(agent_path("media"))
-        return media if isinstance(media, dict) else None
+        if not isinstance(media, dict):
+            return None
+        foreground = self._current_app_package
+        app = media.get("app")
+        if foreground and isinstance(app, str) and app != foreground:
+            return None
+        return media
 
     @property
     def app_name(self) -> str | None:
+        # The foreground app the TV reports, not the media session's app (which
+        # may be a stale background session); matches what ``source`` shows.
+        pkg = self._current_app_package
+        if pkg:
+            return self.coordinator.app_label(pkg) or pkg
         media = self._agent_media
         if media and media.get("active") and isinstance(media.get("app"), str):
             return self.coordinator.app_label(media["app"]) or media["app"]
@@ -518,26 +535,34 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
             return
         await self.async_set_volume_level(max(0.0, min(1.0, current + delta)))
 
-    # -- transport (cloud) --------------------------------------------------
+    # -- transport (local media session, falling back to the Sony cloud) ------
+    # Prefer the agent's local MediaController (lower latency, works offline,
+    # precise seek); fall back to the cloud when there's no active session
+    # (e.g. live TV) or no/older agent.
     async def _async_playback(self, value: str) -> None:
         await self.coordinator.async_cloud_command(
             _PLAYBACK, [cloud.set_command(_PLAYBACK, value)]
         )
 
     async def async_media_play(self) -> None:
-        await self._async_playback("playing")
+        if not await self.coordinator.async_agent_media_command("play"):
+            await self._async_playback("playing")
 
     async def async_media_pause(self) -> None:
-        await self._async_playback("paused")
+        if not await self.coordinator.async_agent_media_command("pause"):
+            await self._async_playback("paused")
 
     async def async_media_stop(self) -> None:
-        await self._async_playback("stopped")
+        if not await self.coordinator.async_agent_media_command("stop"):
+            await self._async_playback("stopped")
 
     async def async_media_next_track(self) -> None:
-        await self._async_playback("next")
+        if not await self.coordinator.async_agent_media_command("next"):
+            await self._async_playback("next")
 
     async def async_media_previous_track(self) -> None:
-        await self._async_playback("previous")
+        if not await self.coordinator.async_agent_media_command("previous"):
+            await self._async_playback("previous")
 
     @property
     def media_position(self) -> int | None:
@@ -554,6 +579,9 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         return int(value) // 1000 if isinstance(value, int | float) else None
 
     async def async_media_seek(self, position: float) -> None:
-        await self.coordinator.async_cloud_command(
-            _SEEK, [cloud.set_command(_SEEK, int(position))]
-        )
+        if not await self.coordinator.async_agent_media_command(
+            "seek", int(position * 1000)
+        ):
+            await self.coordinator.async_cloud_command(
+                _SEEK, [cloud.set_command(_SEEK, int(position))]
+            )

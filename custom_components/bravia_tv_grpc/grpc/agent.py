@@ -418,6 +418,17 @@ class AgentClient:
             body["icon"] = icon
         return await self._request("POST", "/v1/notify", body=body)
 
+    async def async_media_command(
+        self, action: str, position_ms: int | None = None
+    ) -> dict[str, Any]:
+        """Send a transport command (play/pause/stop/next/previous/seek) to the
+        TV's active media session; returns {"ok": bool} (ok False when there is
+        no controllable session). Raises AgentError on an older agent (404)."""
+        body: dict[str, Any] = {"action": action}
+        if position_ms is not None:
+            body["position_ms"] = position_ms
+        return await self._request("POST", "/v1/media/command", body=body)
+
     async def async_picture_batch(
         self, settings: list[dict[str, str]]
     ) -> dict[str, Any]:

@@ -1097,6 +1097,29 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             other_label = other
         return {"a": name, "b": other_label, "differences": picture_profiles.diff(a, b)}
 
+    async def async_agent_media_command(
+        self, action: str, position_ms: int | None = None
+    ) -> bool:
+        """Try the agent's local media-session transport; True if it handled it.
+
+        Returns False -- so the caller falls back to the Sony cloud -- when the
+        agent is offline, has no controllable session (e.g. live TV), or errors
+        (including an older agent without the endpoint)."""
+        if self.agent is None or not self.agent_online:
+            return False
+        # Only control the session that belongs to the foreground app: a stale
+        # background session (e.g. a paused app left behind) must not be hit.
+        # The TV reports the foreground package in system_setting.application.
+        foreground = self._state.get("system_setting.application")
+        session_app = self.agent_value("media", "app")
+        if foreground and session_app and foreground != session_app:
+            return False
+        try:
+            result = await self.agent.async_media_command(action, position_ms)
+        except agentmod.AgentError:
+            return False
+        return bool(result and result.get("ok"))
+
     async def async_find_remote(self) -> None:
         """Make the remote beep through the agent; raises a translated error."""
         agent = self._require_agent()
