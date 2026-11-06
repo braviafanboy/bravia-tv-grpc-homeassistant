@@ -24,8 +24,8 @@ change to Home Assistant as it happens.
   they do in BRAVIA Connect, and need internet access.
 - **More with the optional HA TV Agent.** A small companion app on the TV adds
   the ambient light and temperature sensors, now-playing titles and artwork,
-  the remote's battery, a Find remote button that makes the remote beep, and
-  every picture setting from the TV's menu.
+  the remote's battery, a Find remote button that makes the remote beep,
+  on-screen messages, and every picture setting from the TV's menu.
 - **Resilient.** It recovers from TV reboots, network drops and expired
   sessions on its own. Controls that cannot be used in the current context
   show as unavailable, and a diagnostic sensor says why.

@@ -681,6 +681,21 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             result = await agent.async_notify(
                 message, title, duration_s=duration, icon=icon
             )
+        except agentmod.AgentRequestError as err:
+            if err.status == 404:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="notify_needs_agent_update",
+                    translation_placeholders={
+                        "name": self.device_name,
+                        "required": AGENT_VERSION,
+                    },
+                ) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
         except agentmod.AgentError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,

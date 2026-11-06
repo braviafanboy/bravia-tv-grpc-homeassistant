@@ -77,3 +77,17 @@ async def test_agent_offline_raises(hass: HomeAssistant):
     with pytest.raises(HomeAssistantError) as err:
         await c.async_notify("hello")
     assert err.value.translation_key == "agent_offline"
+
+
+async def test_older_agent_404_needs_update(hass: HomeAssistant):
+    c = _coordinator(hass, agentmod.AgentRequestError("not_found", 404))
+    with pytest.raises(HomeAssistantError) as err:
+        await c.async_notify("hello")
+    assert err.value.translation_key == "notify_needs_agent_update"
+
+
+async def test_other_agent_error_offline(hass: HomeAssistant):
+    c = _coordinator(hass, agentmod.AgentRequestError("boom", 500))
+    with pytest.raises(HomeAssistantError) as err:
+        await c.async_notify("hello")
+    assert err.value.translation_key == "agent_offline"

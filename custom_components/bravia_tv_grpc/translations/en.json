@@ -100,6 +100,9 @@
     },
     "notify_no_overlay": {
       "message": "Shown in the TV's notification panel, not on screen: grant {name}'s HA TV Agent the \"Display over other apps\" permission for an on-screen banner."
+    },
+    "notify_needs_agent_update": {
+      "message": "On-screen messages need HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
     }
   },
   "entity": {
