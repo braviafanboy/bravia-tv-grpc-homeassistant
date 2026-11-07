@@ -189,7 +189,6 @@ show_dashboard:
           unit_of_measurement: s
     kiosk:
       required: false
-      default: true
       selector:
         boolean:
 close_dashboard:

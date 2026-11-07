@@ -42,7 +42,8 @@ SHOW_DASHBOARD_SCHEMA = vol.Schema(
         vol.Optional("duration"): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=dashboards.MAX_DURATION)
         ),
-        vol.Optional("kiosk", default=True): cv.boolean,
+        # Omitted: hidden title bar for an overlay, shown for full screen.
+        vol.Optional("kiosk"): cv.boolean,
     }
 )
 _TV_ONLY = vol.Schema(_TV)
@@ -83,7 +84,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
             position=call.data["position"],
             size=call.data["size"],
             duration=call.data.get("duration"),
-            kiosk=call.data["kiosk"],
+            kiosk=call.data.get("kiosk"),
         )
 
     async def close_dashboard(call: ServiceCall) -> None:

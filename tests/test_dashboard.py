@@ -136,7 +136,7 @@ async def test_show_full(hass: HomeAssistant, _internal_url):
         "position": None,
         "size": None,
         "duration_s": None,
-        "kiosk": True,
+        "kiosk": None,
     }
 
 

@@ -773,7 +773,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         position: str | None = None,
         size: int | None = None,
         duration: int | None = None,
-        kiosk: bool = True,
+        kiosk: bool | None = None,
     ) -> None:
         """Show a Home Assistant dashboard on the TV through the agent."""
         agent = self._require_agent()

@@ -680,8 +680,8 @@
           "description": "Seconds on screen. Leave empty or 0 for the default: until closed for full screen, 30 seconds for an overlay (an overlay can't be closed with the remote). At most 3600."
         },
         "kiosk": {
-          "name": "Kiosk mode",
-          "description": "Hide Home Assistant's sidebar and its editing controls. The dashboard's title bar stays."
+          "name": "Hide title bar",
+          "description": "Hide the dashboard's title bar for a cleaner look. Left out: hidden for an overlay, shown for full screen, where its tabs and back arrow are how you move between views. Home Assistant's sidebar and editing controls are always hidden on the TV."
         }
       }
     },

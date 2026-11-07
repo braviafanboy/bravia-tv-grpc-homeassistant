@@ -430,17 +430,18 @@ class AgentClient:
         position: str | None = None,
         size: int | None = None,
         duration_s: int | None = None,
-        kiosk: bool = True,
+        kiosk: bool | None = None,
     ) -> dict[str, Any]:
         """Show a Home Assistant dashboard on the TV; returns {"state"}
         (shown | no_permission | failed). 404 on agents before 0.9.0."""
         body: dict[str, Any] = {
             "url": url,
             "mode": mode,
-            "kiosk": kiosk,
             "token": token,
             "expires_in": expires_in,
         }
+        if kiosk is not None:  # omitted: the agent's per-mode default
+            body["kiosk"] = kiosk
         if position:
             body["position"] = position
         if size:

@@ -248,8 +248,10 @@ Assistant dashboard on the TV screen in one of two modes:
 
 Both modes need the agent's "Display over other apps" permission (Android only
 lets a background app bring a screen forward with it); the agent's setup asks
-for it. **Kiosk mode** (on by default) hides Home Assistant's sidebar and
-editing controls; the dashboard's title bar stays.
+for it. Home Assistant's sidebar and editing controls are always hidden on the
+TV. **Hide title bar** (`kiosk`) also hides the dashboard's title bar for a
+cleaner look: on by default for overlays, off for full screen, where its tabs
+and back arrow are how you move between views.
 
 ```yaml
 action: bravia_tv_grpc.show_dashboard
