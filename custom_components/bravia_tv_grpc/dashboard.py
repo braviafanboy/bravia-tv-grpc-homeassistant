@@ -21,6 +21,7 @@ from typing import Any
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.models import RefreshToken, User
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.storage import Store
 
@@ -93,6 +94,12 @@ async def async_display_user(hass: HomeAssistant) -> User:
             user = await hass.auth.async_get_user(user_id)
             if user is not None:
                 return user
+        # Home Assistant makes the first user ever created its owner; the TV's
+        # user must never be that, so wait until onboarding has made one.
+        if not any(not u.system_generated for u in await hass.auth.async_get_users()):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="dashboard_no_owner"
+            )
         user = await hass.auth.async_create_user(
             DISPLAY_USER_NAME, group_ids=[GROUP_ID_USER], local_only=True
         )

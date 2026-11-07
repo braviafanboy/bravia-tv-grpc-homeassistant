@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,13 @@ from custom_components.bravia_tv_grpc.grpc import agent as agentmod  # noqa: E40
 @pytest.fixture(autouse=True)
 def _enable(enable_custom_integrations):
     yield
+
+
+@pytest.fixture(autouse=True)
+async def _owner(hass: HomeAssistant):
+    """A real install already has its owner (onboarding); Home Assistant makes
+    the first user ever created the owner."""
+    await hass.auth.async_create_user("Owner")
 
 
 @pytest.fixture
@@ -68,9 +75,6 @@ def test_dashboard_path():
 
 
 async def test_display_user_created_once(hass: HomeAssistant):
-    # A real install already has its owner (onboarding); Home Assistant makes
-    # the first user ever created the owner.
-    await hass.auth.async_create_user("Owner")
     token, expires_in = await dashboards.async_access_token(hass)
     assert expires_in == 1800
     users = [
@@ -295,3 +299,15 @@ async def test_action_without_a_tv(hass: HomeAssistant, _internal_url):
         )
     assert err.value.translation_key == "no_tv_targeted"
     c.agent.async_dashboard_open.assert_not_awaited()
+
+
+async def test_no_display_user_before_onboarding(hass: HomeAssistant):
+    """Without a real user yet, the TV's user would become the owner: refuse."""
+    with (
+        patch.object(hass.auth, "async_get_users", AsyncMock(return_value=[])),
+        patch.object(hass.auth, "async_create_user", AsyncMock()) as create,
+        pytest.raises(HomeAssistantError) as err,
+    ):
+        await dashboards.async_display_user(hass)
+    assert err.value.translation_key == "dashboard_no_owner"
+    create.assert_not_awaited()

@@ -148,6 +148,9 @@
     },
     "ambient_unavailable": {
       "message": "Ambient brightness is not available on {name}. It needs the HA TV Agent."
+    },
+    "dashboard_no_owner": {
+      "message": "Finish setting up Home Assistant (create its owner account) before showing dashboards on the TV."
     }
   },
   "entity": {
