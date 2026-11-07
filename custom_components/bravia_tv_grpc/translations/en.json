@@ -587,7 +587,7 @@
       "fields": {
         "curves": {
           "name": "Curves",
-          "description": "{\"default\": [6 values], \"modes\": {\"<picture mode>\": [6 values]}}, as returned by Get ambient brightness curves."
+          "description": "{\"default\": [6 values], \"modes\": {\"picture mode\": [6 values]}}, as returned by Get ambient brightness curves."
         }
       }
     },
