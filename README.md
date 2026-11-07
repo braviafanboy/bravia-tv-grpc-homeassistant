@@ -25,7 +25,8 @@ change to Home Assistant as it happens.
 - **More with the optional HA TV Agent.** A small companion app on the TV adds
   the ambient light and temperature sensors, now-playing titles and artwork,
   the remote's battery, a Find remote button that makes the remote beep,
-  on-screen messages, and every picture setting from the TV's menu.
+  on-screen messages, every picture setting from the TV's menu, and an ambient
+  brightness mode that sets the picture Brightness from the room's light.
 - **Resilient.** It recovers from TV reboots, network drops and expired
   sessions on its own. Controls that cannot be used in the current context
   show as unavailable, and a diagnostic sensor says why.
@@ -196,6 +197,33 @@ is added). The folder *is* the store, so there's no separate export/import:
 Use the **File editor**, **Samba share**, **Studio Code Server** or SSH add-on
 to reach the folder. The file name is the profile name. Files are validated on
 read, so a malformed or hand-mangled one is skipped rather than loaded.
+
+### Ambient brightness
+
+With the agent installed, the TV's picture **Brightness** can follow the room's
+light level, with a separate curve per picture mode. The agent runs the loop on
+the TV, so it keeps working even while Home Assistant is down; Home Assistant
+edits and mirrors it. It is **off by default** and SDR only (the TV keeps
+separate picture values for HDR and Dolby Vision).
+
+- **Ambient brightness** (switch) — turns it on and off.
+- **Ambient brightness learning** (switch) — chooses how a *manual* brightness
+  change is treated. With learning **off**, changing Brightness by hand switches
+  ambient brightness off until you turn it back on. With learning **on**, it
+  takes the new value as this picture mode's brightness for the current light
+  and carries on from there.
+- **Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux** (numbers) — the
+  current picture mode's curve; they show and edit whichever mode is active.
+- **Reset ambient brightness curve** (button) — drops the current mode's own
+  curve so it follows the shared default again.
+- **Ambient brightness status** (sensor) — off, active, paused or unavailable,
+  with the reason and the curves as attributes.
+
+It pauses itself while the TV's own **Auto luminance level** is on (the two
+would fight), without the IP control key, while the screen is off, and during
+HDR or Dolby Vision. Restoring a [picture profile](#picture-profiles) resets the
+learnt curve for that picture mode, since the restore sets a new brightness
+baseline. Nothing about ambient brightness is stored in a profile.
 
 ## Options
 

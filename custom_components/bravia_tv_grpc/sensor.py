@@ -26,7 +26,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import picture
+from . import ambient, picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
 from .entity import (
@@ -190,6 +190,7 @@ async def async_setup_entry(
         )
         if not coordinator.rest_writable:
             entities.append(BraviaTvPowerSavingSensor(coordinator))
+        entities.append(ambient.BraviaTvAmbientStatusSensor(coordinator))
     async_add_entities(entities)
     writable = coordinator.rest_writable
 

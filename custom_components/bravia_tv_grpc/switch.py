@@ -10,7 +10,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import picture
+from . import ambient, picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
 from .entity import (
@@ -76,6 +76,8 @@ async def async_setup_entry(
         for name, (key, icon) in _CLOUD_SWITCHES.items()
         if coordinator.cloud_supports(name)
     )
+    if coordinator.agent_expected:
+        entities.extend(ambient.switches(coordinator))
     async_add_entities(entities)
     if coordinator.rest_writable:
         async_add_picture_entities(

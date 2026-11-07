@@ -661,6 +661,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("agent REST sync: %s", err)
         except Exception:  # noqa: BLE001 - never let the sync end the stream
             _LOGGER.exception("agent REST sync failed")
+        await self._async_send_ambient_signal()
 
     async def async_agent_resync_rest(self) -> None:
         """Re-send the refresh settings (options changed in place)."""
@@ -1018,6 +1019,24 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 applied += 1
             except (HomeAssistantError, TypeError, ValueError):
                 failed += 1
+        # Ambient-brightness clash (Option A): a restore sets a new brightness
+        # baseline, so any lux->brightness curve the learner has learnt for this
+        # picture mode is now stale. If the learner is enabled, reset that mode's
+        # curve so it relearns from the restored baseline. We pass the restored
+        # mode explicitly (``{"mode": ...}``): the agent otherwise falls back to
+        # its own cached current mode, which may still lag the just-written mode,
+        # so being explicit targets the right curve deterministically. When the
+        # profile carries no mode (a subset profile), the mode was not switched,
+        # so an empty body correctly resets whatever mode is current. Best effort:
+        # never fail the restore over it. Nothing ambient is stored in the
+        # profile. False when the learner is off or the agent lacks it.
+        ambient_reset = False
+        if self.agent_value("ambient", "enabled") is True:
+            try:
+                await self.async_ambient("reset", {"mode": mode} if mode else {})
+                ambient_reset = True
+            except HomeAssistantError:
+                ambient_reset = False
         profile_model = profile.get("model")
         return {
             "name": name,
@@ -1033,6 +1052,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "applied": applied,
             "failed": failed,
             "auto_luminance_on": auto_on,
+            "ambient_reset": ambient_reset,
             "results": result.get("results"),
         }
 
@@ -1182,6 +1202,44 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             translation_key=key,
             translation_placeholders={"name": self.device_name},
         )
+
+    async def async_ambient(self, sub: str, body: dict[str, Any]) -> None:
+        """Ambient brightness change on the agent; raises a translated error.
+        The new status is applied at once (it also arrives on the stream)."""
+        agent = self._require_agent()
+        try:
+            status = await agent.async_ambient(sub, body)
+        except agentmod.AgentRequestError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="ambient_refused",
+                translation_placeholders={"name": self.device_name, "code": err.code},
+            ) from err
+        except agentmod.AgentError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="agent_offline",
+                translation_placeholders={"name": self.device_name},
+            ) from err
+        if isinstance(status, dict):
+            self._state[agent_path("ambient")] = status
+            self.async_set_updated_data(dict(self._state))
+
+    async def _async_send_ambient_signal(self) -> None:
+        """Tell the agent the video's dynamic range class, so ambient
+        brightness only runs on SDR. Older agents answer 404; never raises."""
+        if self.agent is None or not self.agent_online:
+            return
+        try:
+            await self.agent.async_ambient(
+                "context", {"signal": self._last_hdr_type or "sdr"}
+            )
+        except agentmod.AgentUnauthorized:
+            raise
+        except agentmod.AgentError as err:
+            _LOGGER.debug("ambient signal hint: %s", err)
+        except Exception:  # noqa: BLE001 - a hint must never end the stream
+            _LOGGER.exception("ambient signal hint failed")
 
     def _hdr_changed(self, value: Any) -> bool:
         """True when the video's dynamic range class changes (SDR ↔ HDR10 ↔
@@ -1922,6 +1980,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state[path] = value
         if path == _SIGNAL_VIDEO and self._hdr_changed(value):
             self._schedule_picture_refresh(_HDR_REFRESH_DELAY)
+            self.hass.async_create_task(
+                self._async_send_ambient_signal(), name="bravia_tv_ambient_signal"
+            )
         elif _picture_set_changed(path, previous, value):
             self._schedule_picture_refresh()
         if path == "power" and not value and cloud_path("sleep_timer") in self._state:

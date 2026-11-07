@@ -122,6 +122,33 @@ BRAVIA 8 II:
 | Prime Video | Nothing readable beyond a catalogue id |
 | Netflix | Nothing beyond play state |
 
+## Ambient brightness
+
+With the HA TV Agent, the TV's Brightness slider can follow the room's light
+level, with a curve per picture mode (SDR only). The agent runs it on the TV;
+these entities edit and mirror it. Off by default.
+
+| Entity | What it does |
+|---|---|
+| `switch` Ambient brightness | On/off |
+| `switch` Ambient brightness learning | How a manual brightness change is treated: on, it learns the new value for the current light and holds a minute before resuming; off, it switches ambient brightness off until you turn it back on |
+| `number` Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux | The current picture mode's curve (0-50); they show and edit whichever mode is active |
+| `button` Reset ambient brightness curve | The current mode follows the shared default again |
+| `sensor` Ambient brightness status | Off, active, paused or unavailable; `reason`, `picture_mode`, `target`, `lux` and all `curves` as attributes |
+
+Service actions on the media player: `bravia_tv_grpc.get_ambient_curves`
+(returns all curves) and `bravia_tv_grpc.set_ambient_curves` (replaces them),
+for backups and scripts. It pauses itself while the TV's own Auto luminance
+level is on, without the IP control key, with the screen off and during HDR or
+Dolby Vision.
+
+Restoring a [picture profile](#picture-settings) sets a new brightness
+baseline, which makes the learnt curve for that picture mode stale. So when the
+learner is on, a restore resets that mode's curve (as the Reset button does) to
+relearn from the restored baseline; the restore result reports this as
+`ambient_reset`. The restored mode is named explicitly, so the reset always
+hits the right curve. Nothing about ambient brightness is stored in a profile.
+
 ## Picture settings
 
 With the agent installed, every picture setting the TV's menu offers appears

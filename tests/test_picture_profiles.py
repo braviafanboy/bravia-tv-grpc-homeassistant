@@ -114,6 +114,47 @@ async def test_save_then_restore(hass: HomeAssistant):
     c.agent.async_picture_batch.assert_awaited_once()
     assert res["applied"] == 2
     assert res["auto_luminance_on"] is False
+    # No ambient learner on the agent -> nothing to reset.
+    assert res["ambient_reset"] is False
+
+
+async def test_restore_resets_ambient_learner_when_enabled(hass: HomeAssistant):
+    """Option A: a restore changes the brightness baseline, so if the ambient
+    learner is on, its stale per-mode curve is reset to relearn."""
+    c = _coordinator(hass)
+    c._state[agent_path("ambient")] = {"enabled": True}
+    c.agent.async_ambient = AsyncMock(return_value={"enabled": True})
+    await c.async_save_picture_profile("cal")
+    res = await c.async_restore_picture_profile("cal")
+    # The restored mode is passed explicitly so the agent resets the right
+    # curve without depending on its (possibly lagging) cached current mode.
+    c.agent.async_ambient.assert_awaited_once_with("reset", {"mode": "professional"})
+    assert res["ambient_reset"] is True
+
+
+async def test_restore_skips_ambient_reset_when_learner_off(hass: HomeAssistant):
+    c = _coordinator(hass)
+    c._state[agent_path("ambient")] = {"enabled": False}
+    c.agent.async_ambient = AsyncMock(return_value={"enabled": False})
+    await c.async_save_picture_profile("cal")
+    res = await c.async_restore_picture_profile("cal")
+    c.agent.async_ambient.assert_not_awaited()
+    assert res["ambient_reset"] is False
+
+
+async def test_restore_ambient_reset_is_best_effort(hass: HomeAssistant):
+    """A failed learner reset never fails the restore itself."""
+    from custom_components.bravia_tv_grpc.grpc import agent as agentmod
+
+    c = _coordinator(hass)
+    c._state[agent_path("ambient")] = {"enabled": True}
+    c.agent.async_ambient = AsyncMock(
+        side_effect=agentmod.AgentRequestError("boom", 500)
+    )
+    await c.async_save_picture_profile("cal")
+    res = await c.async_restore_picture_profile("cal")
+    assert res["applied"] == 2  # the picture restore still succeeded
+    assert res["ambient_reset"] is False
 
 
 async def test_restore_unknown_raises(hass: HomeAssistant):
@@ -424,6 +465,18 @@ async def test_subset_profile_restores_only_its_keys(hass: HomeAssistant):
     batch = c.agent.async_picture_batch.await_args.args[0]
     assert {s["target"] for s in batch} == {"redGain", "blueGain"}
     assert res["picture_mode"] is None
+
+
+async def test_restore_ambient_reset_without_mode_uses_empty_body(hass: HomeAssistant):
+    """A mode-less (subset) profile doesn't switch the mode, so the learner
+    reset sends an empty body and the agent resets whatever mode is current."""
+    c = _coordinator(hass)
+    c._state[agent_path("ambient")] = {"enabled": True}
+    c.agent.async_ambient = AsyncMock(return_value={"enabled": True})
+    await c._picture_profiles.put("twopoint", {"settings": {"redGain": "2"}})
+    res = await c.async_restore_picture_profile("twopoint")
+    c.agent.async_ambient.assert_awaited_once_with("reset", {})
+    assert res["ambient_reset"] is True
 
 
 async def test_no_signal_counts_as_sdr(hass: HomeAssistant):

@@ -34,6 +34,7 @@ BLOCKS = (
     "picture",
     "power_saving",
     "remote_finder",
+    "ambient",
 )
 _INFO_TIMEOUT = 4
 _REQUEST_TIMEOUT = 8
@@ -440,6 +441,11 @@ class AgentClient:
             body={"settings": settings},
             timeout=_REQUEST_TIMEOUT * 10,
         )
+
+    async def async_ambient(self, sub: str, body: dict[str, Any]) -> dict[str, Any]:
+        """``POST /v1/ambient/<sub>`` (config, curve, reset, curves, context):
+        ambient brightness. Returns the new ambient status."""
+        return await self._request("POST", f"/v1/ambient/{sub}", body=body)
 
     async def async_picture_refresh(self) -> None:
         """``POST /v1/picture/refresh``: re-read the REST picture settings now."""

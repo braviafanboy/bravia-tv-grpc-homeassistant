@@ -121,6 +121,7 @@ class FakeAgent:
         self.state_doc = dict(_DOC)
         self.events: asyncio.Queue = asyncio.Queue()
         self.pair_tokens: list[str] = []
+        self.ambient_calls: list[tuple[str, dict]] = []
         self.reject_token: str | None = None
         self.stream_started = asyncio.Event()
         self.picture_configs: list[tuple] = []
@@ -165,6 +166,10 @@ class FakeAgent:
         if not self.token or self.token == self.reject_token:
             raise agentmod.AgentUnauthorized("state")
         return self.state_doc
+
+    async def async_ambient(self, sub, body):
+        self.ambient_calls.append((sub, body))
+        return {"enabled": False, "state": "off", "curve": [9, 9, 11, 15, 25, 25]}
 
     async def async_pair(self, name):
         self._handshake()

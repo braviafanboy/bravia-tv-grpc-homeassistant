@@ -8,7 +8,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import picture
+from . import ambient, picture
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
 from .entity import BraviaTvEntity, BraviaTvPictureEntity, async_add_picture_entities
@@ -83,6 +83,8 @@ async def async_setup_entry(
         for path, (key, icon) in _NUMBERS.items()
         if path in caps and caps[path].type == "int"
     )
+    if coordinator.agent_expected:
+        async_add_entities(ambient.anchors(coordinator))
     if coordinator.rest_writable:
         async_add_picture_entities(
             coordinator,

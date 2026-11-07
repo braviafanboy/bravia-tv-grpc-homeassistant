@@ -13,6 +13,7 @@ are offered only when the TV advertises those cloud capabilities.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.media_player import (
     BrowseMedia,
@@ -139,6 +140,17 @@ async def async_setup_entry(
             "compare_picture_profiles",
             {vol.Required("name"): cv.string, vol.Optional("other"): cv.string},
             "async_compare_picture_profiles",
+            supports_response=SupportsResponse.ONLY,
+        )
+        platform.async_register_entity_service(
+            "set_ambient_curves",
+            {vol.Required("curves"): dict},
+            "async_set_ambient_curves",
+        )
+        platform.async_register_entity_service(
+            "get_ambient_curves",
+            None,
+            "async_get_ambient_curves",
             supports_response=SupportsResponse.ONLY,
         )
 
@@ -493,6 +505,21 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
         self, name: str, other: str | None = None
     ) -> dict:
         return await self.coordinator.async_compare_picture_profile(name, other)
+
+    async def async_set_ambient_curves(self, curves: dict[str, Any]) -> None:
+        """Replace the ambient brightness curves on the HA TV Agent:
+        ``{"default": [6], "modes": {"<picture mode>": [6], ...}}``."""
+        await self.coordinator.async_ambient("curves", curves)
+
+    async def async_get_ambient_curves(self) -> dict[str, Any]:
+        """The ambient brightness curves, for backup or editing."""
+        status = self.coordinator.agent_value("ambient")
+        if not isinstance(status, dict):
+            raise HomeAssistantError("Ambient brightness is not available")
+        return {
+            "anchors_lux": status.get("anchors_lux"),
+            "curves": status.get("curves"),
+        }
 
     async def async_search(self, query: str, play: bool = False) -> None:
         """Show Sony's on-screen search results for ``query`` (entity service)."""

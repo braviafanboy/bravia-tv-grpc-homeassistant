@@ -8,6 +8,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import ambient
 from .const import DOMAIN
 from .coordinator import BraviaTvCoordinator
 from .entity import BraviaTvAgentEntity
@@ -27,6 +28,7 @@ async def async_setup_entry(
                 BraviaTvSaveProfileButton(coordinator),
                 BraviaTvRestoreProfileButton(coordinator),
                 BraviaTvDeleteProfileButton(coordinator),
+                ambient.BraviaTvAmbientResetButton(coordinator),
             ]
         )
 

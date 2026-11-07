@@ -124,6 +124,9 @@
     },
     "picture_profile_invalid_name": {
       "message": "{name} can't be used as a profile name. Use a name without slashes or control characters (it becomes the file name)."
+    },
+    "ambient_refused": {
+      "message": "{name} refused the ambient brightness change ({code})."
     }
   },
   "entity": {
@@ -148,6 +151,12 @@
       },
       "picture_setting": {
         "name": "{setting}"
+      },
+      "ambient_brightness": {
+        "name": "Ambient brightness"
+      },
+      "ambient_learning": {
+        "name": "Ambient brightness learning"
       }
     },
     "number": {
@@ -180,6 +189,9 @@
       },
       "picture_setting": {
         "name": "{setting}"
+      },
+      "ambient_anchor": {
+        "name": "Ambient brightness at {lux} lux"
       }
     },
     "select": {
@@ -362,6 +374,30 @@
           "low": "Low",
           "high": "High"
         }
+      },
+      "ambient_status": {
+        "name": "Ambient brightness status",
+        "state": {
+          "off": "Off",
+          "active": "Active",
+          "paused": "Paused",
+          "unavailable": "Unavailable"
+        },
+        "state_attributes": {
+          "reason": {
+            "name": "Reason",
+            "state": {
+              "screen_off": "Screen off",
+              "hdr": "HDR or Dolby Vision playing",
+              "manual": "Brightness changed by hand",
+              "tv_auto_luminance": "TV's Auto luminance level is on",
+              "no_key": "No IP control key",
+              "ip_control_unreachable": "IP control unreachable",
+              "warming_up": "Measuring the room",
+              "no_light_sensor": "No light sensor"
+            }
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -423,6 +459,9 @@
       },
       "delete_picture_profile": {
         "name": "Delete picture profile"
+      },
+      "ambient_reset": {
+        "name": "Reset ambient brightness curve"
       }
     },
     "notify": {
@@ -541,6 +580,20 @@
           "description": "Another profile to compare against. Leave blank to compare with the TV's current settings."
         }
       }
+    },
+    "set_ambient_curves": {
+      "name": "Set ambient brightness curves",
+      "description": "Replace the HA TV Agent's ambient brightness curves: a default and, optionally, one per picture mode, each the Brightness slider (0-50) at 0, 10, 25, 60, 150 and 500 lux.",
+      "fields": {
+        "curves": {
+          "name": "Curves",
+          "description": "{\"default\": [6 values], \"modes\": {\"<picture mode>\": [6 values]}}, as returned by Get ambient brightness curves."
+        }
+      }
+    },
+    "get_ambient_curves": {
+      "name": "Get ambient brightness curves",
+      "description": "Return the HA TV Agent's ambient brightness curves, for backup or editing."
     }
   },
   "selector": {
