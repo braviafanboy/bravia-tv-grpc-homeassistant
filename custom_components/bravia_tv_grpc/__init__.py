@@ -17,9 +17,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .bravia_tv_client import (
     BraviaTvAuthError,
@@ -66,6 +68,17 @@ PLATFORMS: list[Platform] = [
     Platform.TEXT,
     Platform.UPDATE,
 ]
+
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's device-targeted actions."""
+    from .services import async_setup_services
+
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -416,3 +429,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator: BraviaTvCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The TV was removed: drop the dashboard display user with the last TV."""
+    others = [
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.entry_id != entry.entry_id
+    ]
+    if not others:
+        from .dashboard import async_remove_display_user
+
+        await async_remove_display_user(hass)

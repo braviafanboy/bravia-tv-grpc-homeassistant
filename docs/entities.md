@@ -105,6 +105,7 @@ installed on the TV, the device gains:
 | `button` Find remote | The remote's Bluetooth link | Makes the remote beep, as the TV's own Find remote does; press any button on the remote to silence it. Works while the TV is on; needs the Bluetooth permission |
 | `update` HA TV Agent | The agent's release manifest | Installs a new agent version, with one confirmation on the TV |
 | `notify` On-screen message | The agent's overlay on the TV | Shows a message on the TV screen as a banner styled like the TV's own notifications. `notify.send_message` takes a message and title (default icon/duration from the integration's options); the `bravia_tv_grpc.send_notification` action adds an icon and duration. Works while the TV is on; not shown over the Settings menu and other secure screens |
+| `bravia_tv_grpc.show_dashboard` / `close_dashboard` actions | The agent's built-in browser | Shows a Home Assistant dashboard on the TV, full screen (interactive with the remote) or as a view-only overlay panel; signs in as the limited *HA TV Agent display* user. See the README |
 | Picture settings and power saving | The TV's REST IP control, called by the agent on the TV | See below |
 
 Agent entities are unavailable while the TV is off, since the TV leaves the
@@ -136,7 +137,7 @@ these entities edit and mirror it. Off by default.
 | `button` Reset ambient brightness curve | The current mode follows the shared default again |
 | `sensor` Ambient brightness status | Off, active, paused or unavailable; `reason`, `picture_mode`, `target`, `lux` and all `curves` as attributes |
 
-Service actions on the media player: `bravia_tv_grpc.get_ambient_curves`
+Actions taking the TV as `device_id`: `bravia_tv_grpc.get_ambient_curves`
 (returns all curves) and `bravia_tv_grpc.set_ambient_curves` (replaces them),
 for backups and scripts. It pauses itself while the TV's own Auto luminance
 level is on, without the IP control key, with the screen off and during HDR or

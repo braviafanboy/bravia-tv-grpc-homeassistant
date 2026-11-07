@@ -127,6 +127,27 @@
     },
     "ambient_refused": {
       "message": "{name} refused the ambient brightness change ({code})."
+    },
+    "dashboard_invalid_path": {
+      "message": "{path} is not a dashboard path. Use the part of the dashboard's address after the host, for example lovelace/0."
+    },
+    "dashboard_no_url": {
+      "message": "Home Assistant has no local address to give {name}. Set one under Settings, System, Network."
+    },
+    "dashboard_needs_agent_update": {
+      "message": "Dashboards on the TV need HA TV Agent {required} or later on {name}. Update the agent from its update entity on the TV's device page."
+    },
+    "dashboard_no_overlay": {
+      "message": "Dashboards on the TV need the \"Display over other apps\" permission for {name}'s HA TV Agent. Press Agent setup on the TV's device page, or open the HA TV Agent on the TV, and grant it."
+    },
+    "dashboard_failed": {
+      "message": "{name} could not show the dashboard."
+    },
+    "no_tv_targeted": {
+      "message": "Choose a TV from the Bravia TV (gRPC) integration."
+    },
+    "ambient_unavailable": {
+      "message": "Ambient brightness is not available on {name}. It needs the HA TV Agent."
     }
   },
   "entity": {
@@ -533,6 +554,10 @@
       "name": "Save picture profile",
       "description": "Snapshot the TV's current picture settings (basic through 2-point and 20-point adjustments) as a named profile.",
       "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
         "name": {
           "name": "Name",
           "description": "A name for the profile."
@@ -543,6 +568,10 @@
       "name": "Restore picture profile",
       "description": "Write a saved picture profile back to the TV in a few clicks. Sets the profile's picture mode first, then all its settings.",
       "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
         "name": {
           "name": "Name",
           "description": "The profile to restore."
@@ -557,6 +586,10 @@
       "name": "Delete picture profile",
       "description": "Remove a saved picture profile.",
       "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
         "name": {
           "name": "Name",
           "description": "The profile to delete."
@@ -565,12 +598,22 @@
     },
     "list_picture_profiles": {
       "name": "List picture profiles",
-      "description": "Return the saved picture profiles with their mode, setting count and creation time."
+      "description": "Return the saved picture profiles with their mode, setting count and creation time.",
+      "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        }
+      }
     },
     "compare_picture_profiles": {
       "name": "Compare picture profiles",
       "description": "Return the picture settings that differ between a profile and another profile, or the TV's current settings.",
       "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
         "name": {
           "name": "Profile",
           "description": "The profile to compare."
@@ -585,6 +628,10 @@
       "name": "Set ambient brightness curves",
       "description": "Replace the HA TV Agent's ambient brightness curves: a default and, optionally, one per picture mode, each the Brightness slider (0-50) at 0, 10, 25, 60, 150 and 500 lux.",
       "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
         "curves": {
           "name": "Curves",
           "description": "The ambient brightness curves to set: a default plus optional per-picture-mode curves, each six Brightness values (0-50). Copy the shape returned by Get ambient brightness curves."
@@ -593,7 +640,57 @@
     },
     "get_ambient_curves": {
       "name": "Get ambient brightness curves",
-      "description": "Return the HA TV Agent's ambient brightness curves, for backup or editing."
+      "description": "Return the HA TV Agent's ambient brightness curves, for backup or editing.",
+      "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        }
+      }
+    },
+    "show_dashboard": {
+      "name": "Show dashboard on TV",
+      "description": "Show a Home Assistant dashboard on the TV screen through the HA TV Agent: full screen to use with the remote, or as a view-only panel over what is playing. It signs in as the limited HA TV Agent display user, so admin-only dashboards will not open. The TV must be able to reach Home Assistant.",
+      "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        },
+        "dashboard": {
+          "name": "Dashboard",
+          "description": "The dashboard's path in Home Assistant, as in its address after the host, for example lovelace/0, dashboard-tv/home or energy. Full web addresses are not allowed."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "Full screen: interactive; the remote's arrows move between controls, OK presses, Back steps back and finally asks before closing. Overlay: a view-only panel over what is playing; the remote keeps controlling the app behind."
+        },
+        "position": {
+          "name": "Position",
+          "description": "Where the overlay panel sits (overlay mode only)."
+        },
+        "size": {
+          "name": "Size",
+          "description": "Overlay panel size in percent of the screen: the width of a side panel, or width and height of a corner panel (overlay mode only)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Seconds on screen. Leave empty or 0 for the default: until closed for full screen, 30 seconds for an overlay (an overlay can't be closed with the remote). At most 3600."
+        },
+        "kiosk": {
+          "name": "Kiosk mode",
+          "description": "Hide Home Assistant's sidebar and its editing controls. The dashboard's title bar stays."
+        }
+      }
+    },
+    "close_dashboard": {
+      "name": "Close dashboard on TV",
+      "description": "Close the Home Assistant dashboard showing on the TV, if any.",
+      "fields": {
+        "device_id": {
+          "name": "TV",
+          "description": "The TV to act on."
+        }
+      }
     }
   },
   "selector": {
@@ -607,6 +704,23 @@
         "cast": "Cast",
         "speaker": "Speaker",
         "remote": "Remote"
+      }
+    },
+    "dashboard_mode": {
+      "options": {
+        "full": "Full screen (interactive)",
+        "overlay": "Overlay panel (view only)"
+      }
+    },
+    "dashboard_position": {
+      "options": {
+        "right": "Right side",
+        "left": "Left side",
+        "full": "Whole screen",
+        "top_right": "Top right corner",
+        "top_left": "Top left corner",
+        "bottom_right": "Bottom right corner",
+        "bottom_left": "Bottom left corner"
       }
     }
   }

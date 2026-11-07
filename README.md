@@ -25,8 +25,9 @@ change to Home Assistant as it happens.
 - **More with the optional HA TV Agent.** A small companion app on the TV adds
   the ambient light and temperature sensors, now-playing titles and artwork,
   the remote's battery, a Find remote button that makes the remote beep,
-  on-screen messages, every picture setting from the TV's menu, and an ambient
-  brightness mode that sets the picture Brightness from the room's light.
+  on-screen messages, Home Assistant dashboards on the TV screen, every
+  picture setting from the TV's menu, and an ambient brightness mode that sets
+  the picture Brightness from the room's light.
 - **Resilient.** It recovers from TV reboots, network drops and expired
   sessions on its own. Controls that cannot be used in the current context
   show as unavailable, and a diagnostic sensor says why.
@@ -177,6 +178,11 @@ dashboards automatically. If you'd rather keep them on a dashboard — or show a
 profile's Mode / Range / Model inline — add an `entities` card for those
 entities, with `type: attribute` rows on the select for the inline details.
 
+For automations and scripts the same operations are actions that take the
+TV as their `device_id`: `bravia_tv_grpc.save_picture_profile`, `restore_picture_profile`
+(with `force` to skip the dynamic-range check), `delete_picture_profile`,
+`list_picture_profiles` and `compare_picture_profiles` (which return data).
+
 A hand-made file can hold just a subset of settings (e.g. only the 2-point
 white balance): restoring it writes only those values. Omit `picture_mode` and
 the restore won't change the mode; omit `hdr_class` and the dynamic-range check
@@ -224,6 +230,50 @@ would fight), without the IP control key, while the screen is off, and during
 HDR or Dolby Vision. Restoring a [picture profile](#picture-profiles) resets the
 learnt curve for that picture mode, since the restore sets a new brightness
 baseline. Nothing about ambient brightness is stored in a profile.
+
+### Dashboards on the TV
+
+With the agent installed, the **Show dashboard on TV** action
+(`bravia_tv_grpc.show_dashboard`, for a TV you pick) puts a Home
+Assistant dashboard on the TV screen in one of two modes:
+
+- **Full screen** — interactive. The remote's arrows move between controls and
+  OK presses. Back steps back inside Home Assistant (closes a card's dialog,
+  leaves a subview), then asks before closing the dashboard. It stays until
+  closed unless you set a duration.
+- **Overlay** — a view-only panel over whatever is playing, for example a
+  doorbell camera in a corner or an energy view down the right side. The remote
+  keeps controlling the app behind it, so it closes after a duration (30 s by
+  default) or with **Close dashboard on TV**.
+
+Both modes need the agent's "Display over other apps" permission (Android only
+lets a background app bring a screen forward with it); the agent's setup asks
+for it. **Kiosk mode** (on by default) hides Home Assistant's sidebar and
+editing controls; the dashboard's title bar stays.
+
+```yaml
+action: bravia_tv_grpc.show_dashboard
+data:
+  device_id: 0123456789abcdef0123456789abcdef   # the TV: pick it in the action editor
+  dashboard: dashboard-tv/doorbell   # the path after the host in its address
+  mode: overlay
+  position: top_right                # right, left, full or a corner
+  size: 30                           # percent of the screen
+  duration: 20
+```
+
+How it signs in: on first use the integration creates a limited user,
+**HA TV Agent display** (not an administrator, local network only), and hands
+the TV 30-minute access tokens for it over the agent's local, encrypted link.
+The TV never holds a lasting credential, and nothing about your Home Assistant
+goes through Sony. Home Assistant can't limit a sign-in to one dashboard, so
+the TV can open whatever that user can see; admin-only dashboards won't open.
+The user is removed when the last TV is removed from the integration.
+
+The TV loads the dashboard from Home Assistant's local address (Settings →
+System → Network), so it must be able to reach Home Assistant. If the TV is on
+a separate IoT network, allow it to connect to Home Assistant's port. Home
+Assistant over HTTPS needs a certificate the TV trusts.
 
 ## Options
 

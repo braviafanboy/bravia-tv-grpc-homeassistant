@@ -56,22 +56,24 @@ send_notification:
           unit_of_measurement: seconds
           mode: box
 save_picture_profile:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
     name:
       required: true
       example: "Calibrated (Professional, SDR)"
       selector:
         text:
 restore_picture_profile:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
     name:
       required: true
       example: "Calibrated (Professional, SDR)"
@@ -83,26 +85,30 @@ restore_picture_profile:
       selector:
         boolean:
 delete_picture_profile:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
     name:
       required: true
       selector:
         text:
 list_picture_profiles:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
-compare_picture_profiles:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
+compare_picture_profiles:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
     name:
       required: true
       selector:
@@ -112,18 +118,84 @@ compare_picture_profiles:
       selector:
         text:
 set_ambient_curves:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
     curves:
       required: true
       example: '{"default": [9, 9, 11, 15, 25, 25], "modes": {"cinema": [5, 6, 8, 12, 20, 22]}}'
       selector:
         object:
 get_ambient_curves:
-  target:
-    entity:
-      integration: bravia_tv_grpc
-      domain: media_player
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
+show_dashboard:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc
+    dashboard:
+      required: true
+      example: "lovelace/0"
+      selector:
+        text:
+    mode:
+      required: false
+      default: full
+      selector:
+        select:
+          translation_key: dashboard_mode
+          options:
+            - full
+            - overlay
+    position:
+      required: false
+      default: right
+      selector:
+        select:
+          translation_key: dashboard_position
+          options:
+            - right
+            - left
+            - full
+            - top_right
+            - top_left
+            - bottom_right
+            - bottom_left
+    size:
+      required: false
+      default: 40
+      selector:
+        number:
+          min: 20
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+    duration:
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: s
+    kiosk:
+      required: false
+      default: true
+      selector:
+        boolean:
+close_dashboard:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: bravia_tv_grpc

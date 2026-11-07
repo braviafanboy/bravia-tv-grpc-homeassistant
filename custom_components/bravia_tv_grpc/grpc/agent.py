@@ -35,6 +35,7 @@ BLOCKS = (
     "power_saving",
     "remote_finder",
     "ambient",
+    "dashboard",
 )
 _INFO_TIMEOUT = 4
 _REQUEST_TIMEOUT = 8
@@ -418,6 +419,47 @@ class AgentClient:
         if icon:
             body["icon"] = icon
         return await self._request("POST", "/v1/notify", body=body)
+
+    async def async_dashboard_open(
+        self,
+        url: str,
+        token: str,
+        expires_in: int,
+        *,
+        mode: str = "full",
+        position: str | None = None,
+        size: int | None = None,
+        duration_s: int | None = None,
+        kiosk: bool = True,
+    ) -> dict[str, Any]:
+        """Show a Home Assistant dashboard on the TV; returns {"state"}
+        (shown | no_permission | failed). 404 on agents before 0.9.0."""
+        body: dict[str, Any] = {
+            "url": url,
+            "mode": mode,
+            "kiosk": kiosk,
+            "token": token,
+            "expires_in": expires_in,
+        }
+        if position:
+            body["position"] = position
+        if size:
+            body["size"] = size
+        if duration_s:
+            body["duration_s"] = duration_s
+        return await self._request("POST", "/v1/dashboard", body=body)
+
+    async def async_dashboard_token(self, token: str, expires_in: int) -> None:
+        """Hand the showing dashboard a fresh access token."""
+        await self._request(
+            "POST",
+            "/v1/dashboard/token",
+            body={"token": token, "expires_in": expires_in},
+        )
+
+    async def async_dashboard_close(self) -> None:
+        """Close the dashboard on the TV, if one is showing."""
+        await self._request("DELETE", "/v1/dashboard")
 
     async def async_media_command(
         self, action: str, position_ms: int | None = None

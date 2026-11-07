@@ -31,6 +31,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
+from . import dashboard as dashboards
 from . import picture_profiles
 from .bravia_tv_client import BraviaTvGrpcClient
 from .const import (
@@ -66,6 +67,8 @@ from .grpc.application_list import APPLICATION_LIST_PATH
 from .util import parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
+# A token answer covers the agent's token_needed for this long.
+_DASHBOARD_TOKEN_RESEND_S = 10.0
 
 # Push (StartNotifyStates) is primary; this periodic GetStates is a safety net
 # to reconcile missed deltas and to detect (and recover from) a dead connection
@@ -260,6 +263,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.agent_info: dict[str, Any] = {}
         self._agent_task: asyncio.Task | None = None
         self._agent_last_pair: datetime | None = None
+        # Answers the agent's token_needed while a dashboard is showing.
+        self._dashboard_token_task: asyncio.Task | None = None
+        self._dashboard_token_sent = 0.0
         self._cancel_key_renewal: Any = None
         # Latest agent release per the manifest (version/url/sha256/notes).
         self.agent_latest: dict[str, Any] | None = None
@@ -749,6 +755,103 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_key="notify_no_overlay",
                 translation_placeholders={"name": self.device_name},
             )
+
+    # ---- dashboards on the TV ----------------------------------------------
+
+    def _dashboard_error(self, key: str, **placeholders: str) -> HomeAssistantError:
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key=key,
+            translation_placeholders={"name": self.device_name, **placeholders},
+        )
+
+    async def async_show_dashboard(
+        self,
+        path: str,
+        *,
+        mode: str = "full",
+        position: str | None = None,
+        size: int | None = None,
+        duration: int | None = None,
+        kiosk: bool = True,
+    ) -> None:
+        """Show a Home Assistant dashboard on the TV through the agent."""
+        agent = self._require_agent()
+        try:
+            url = dashboards.dashboard_url(self.hass, path)
+        except dashboards.DashboardPathError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="dashboard_invalid_path",
+                translation_placeholders={"path": path},
+            ) from err
+        except dashboards.NoURLAvailableError as err:
+            raise self._dashboard_error("dashboard_no_url") from err
+        token, expires_in = await dashboards.async_access_token(self.hass)
+        try:
+            result = await agent.async_dashboard_open(
+                url,
+                token,
+                expires_in,
+                mode=mode,
+                position=position if mode == "overlay" else None,
+                size=size if mode == "overlay" else None,
+                duration_s=duration,
+                kiosk=kiosk,
+            )
+        except agentmod.AgentRequestError as err:
+            if err.status == 404:
+                raise self._dashboard_error(
+                    "dashboard_needs_agent_update", required=AGENT_VERSION
+                ) from err
+            raise self._dashboard_error("dashboard_failed") from err
+        except agentmod.AgentError as err:
+            raise self._dashboard_error("agent_offline") from err
+        state = result.get("state")
+        if state == "no_permission":
+            raise self._dashboard_error("dashboard_no_overlay")
+        if state != "shown":
+            raise self._dashboard_error("dashboard_failed")
+
+    async def async_close_dashboard(self) -> None:
+        """Close the dashboard showing on the TV, if any."""
+        agent = self._require_agent()
+        try:
+            await agent.async_dashboard_close()
+        except agentmod.AgentRequestError as err:
+            if err.status == 404:
+                raise self._dashboard_error(
+                    "dashboard_needs_agent_update", required=AGENT_VERSION
+                ) from err
+            raise self._dashboard_error("dashboard_failed") from err
+        except agentmod.AgentError as err:
+            raise self._dashboard_error("agent_offline") from err
+
+    @callback
+    def _maybe_send_dashboard_token(self) -> None:
+        """The dashboard page asked for a token: send a fresh one (once)."""
+        block = self._state.get(agent_path("dashboard"))
+        if not isinstance(block, dict) or not block.get("token_needed"):
+            return
+        task = self._dashboard_token_task
+        if (task is not None and not task.done()) or self.agent is None:
+            return
+        # The flag stays up until the agent's next state event after it got
+        # the token; don't answer the same request twice.
+        if time.monotonic() - self._dashboard_token_sent < _DASHBOARD_TOKEN_RESEND_S:
+            return
+        self._dashboard_token_task = self.hass.async_create_background_task(
+            self._async_send_dashboard_token(), "bravia_tv_grpc dashboard token"
+        )
+
+    async def _async_send_dashboard_token(self) -> None:
+        try:
+            token, expires_in = await dashboards.async_access_token(self.hass)
+            if self.agent is not None:
+                await self.agent.async_dashboard_token(token, expires_in)
+                self._dashboard_token_sent = time.monotonic()
+        except agentmod.AgentError as err:
+            _LOGGER.debug("Could not send a dashboard token to the agent: %s", err)
 
     # ---- picture profiles (backup/restore for manual calibration) ----------
 
@@ -1383,6 +1486,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state[agent_path("updated_at")] = dt_util.utcnow()
         self._state[AGENT_ONLINE] = True
         self._update_rest_issues()
+        self._maybe_send_dashboard_token()
         self.async_set_updated_data(dict(self._state))
 
     async def _async_agent_loop(self) -> None:
