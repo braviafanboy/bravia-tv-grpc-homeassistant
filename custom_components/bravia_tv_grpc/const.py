@@ -76,7 +76,7 @@ GRPC_SERVICE = "jp.co.sony.hes.ssh.controldevice.v1.ControlDeviceService"
 # with integration updates and never run ahead of them. Below AGENT_MIN_VERSION
 # a repair explains what does not work. Bump both when releasing a new agent
 # that this integration needs (docs/development.md, "Releases").
-AGENT_VERSION = "0.9.0"
+AGENT_VERSION = "0.9.1"
 AGENT_MIN_VERSION = "0.4.2"
 
 # Where the integration reads the paired agent release: the JSON manifest
