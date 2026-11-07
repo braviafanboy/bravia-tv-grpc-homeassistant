@@ -1000,7 +1000,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if t not in picture_profiles.GRPC_OWNED_REST_TARGETS
                 and t not in picture_profiles.PROFILE_EXCLUDED
             ]
-            result = await agent.async_picture_batch(settings)
+            result = await self._restore_write(agent, settings)
         except agentmod.AgentError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -1035,6 +1035,29 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "auto_luminance_on": auto_on,
             "results": result.get("results"),
         }
+
+    async def _restore_write(self, agent, settings: list[dict]) -> dict:
+        """Write a profile's REST settings, preferring the agent's batch endpoint
+        and falling back to per-setting writes on an older agent (one without
+        ``/v1/picture/batch``, which answers 404). Keeps restore working across
+        the window where the integration is updated before the agent."""
+        try:
+            return await agent.async_picture_batch(settings)
+        except agentmod.AgentRequestError as err:
+            if err.status != 404:
+                raise
+        applied = 0
+        failed = 0
+        results: list[dict] = []
+        for item in settings:
+            try:
+                await agent.async_set_picture(item["target"], item["value"])
+                applied += 1
+                results.append({"target": item["target"], "ok": True})
+            except agentmod.AgentError:
+                failed += 1
+                results.append({"target": item["target"], "ok": False})
+        return {"applied": applied, "failed": failed, "results": results}
 
     async def async_restore_selected_picture_profile(self) -> dict:
         """Restore the profile chosen in the select entity (the restore button)."""

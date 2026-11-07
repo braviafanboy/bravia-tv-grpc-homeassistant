@@ -108,7 +108,7 @@
       "message": "{name}'s picture settings are not available (the TV's IP control is not answering). Can't read a picture profile."
     },
     "picture_profile_unknown": {
-      "message": "No saved picture profile named '{name}'."
+      "message": "No saved picture profile named {name}."
     },
     "picture_write_unauthorized": {
       "message": "Changing {name}'s picture settings needs the IP control pre-shared key in the integration's options. Can't restore a picture profile without it."
@@ -120,10 +120,10 @@
       "message": "Type a name in the New profile name box before saving."
     },
     "picture_profile_range_mismatch": {
-      "message": "Profile '{name}' was captured in {saved} but {current} is playing now. The TV keeps separate picture settings per dynamic range, so restoring would change the wrong set. Switch to {saved} content, or use the action with Force enabled."
+      "message": "Profile {name} was captured in {saved} but {current} is playing now. The TV keeps separate picture settings per dynamic range, so restoring would change the wrong set. Switch to {saved} content, or use the action with Force enabled."
     },
     "picture_profile_invalid_name": {
-      "message": "'{name}' can't be used as a profile name. Use a name without slashes or control characters (it becomes the file name)."
+      "message": "{name} can't be used as a profile name. Use a name without slashes or control characters (it becomes the file name)."
     }
   },
   "entity": {

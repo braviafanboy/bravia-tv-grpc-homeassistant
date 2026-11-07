@@ -435,3 +435,20 @@ async def test_no_signal_counts_as_sdr(hass: HomeAssistant):
     assert saved["hdr_class"] == "sdr"
     # and it restores in that same no-signal state (guard matches sdr==sdr)
     assert "applied" in await c.async_restore_picture_profile("from-menu")
+
+
+async def test_restore_falls_back_to_per_setting_on_old_agent(hass: HomeAssistant):
+    """If the agent lacks /v1/picture/batch (404), restore falls back to
+    per-setting writes so it still works against the released 0.6.0 agent."""
+    from custom_components.bravia_tv_grpc.grpc import agent as agentmod
+
+    c = _coordinator(hass)
+    await c.async_save_picture_profile("cal")
+    c.agent.async_picture_batch = AsyncMock(
+        side_effect=agentmod.AgentRequestError("not_found", 404)
+    )
+    c.agent.async_set_picture = AsyncMock()
+    res = await c.async_restore_picture_profile("cal")
+    # per-setting writes used instead of the batch
+    assert c.agent.async_set_picture.await_count >= 2  # contrast + color at least
+    assert res["applied"] >= 2 and res["failed"] == 0
