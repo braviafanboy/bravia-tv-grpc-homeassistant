@@ -17,6 +17,7 @@ from homeassistant.helpers import device_registry as dr  # noqa: E402
 
 from custom_components.bravia_tv_grpc.const import DOMAIN  # noqa: E402
 from custom_components.bravia_tv_grpc.services import (  # noqa: E402
+    _device_entry_ids,
     async_setup_services,
 )
 
@@ -137,3 +138,14 @@ async def test_ambient_unavailable(hass: HomeAssistant, tvs):
             return_response=True,
         )
     assert err.value.translation_key == "ambient_unavailable"
+
+
+def test_device_entry_ids_across_cores():
+    """HA 2026.8+ devices have one config_entry_id; older cores only a set."""
+    from types import SimpleNamespace
+
+    assert _device_entry_ids(SimpleNamespace(config_entry_id="e1")) == {"e1"}
+    assert _device_entry_ids(SimpleNamespace(config_entries={"e1", "e2"})) == {
+        "e1",
+        "e2",
+    }

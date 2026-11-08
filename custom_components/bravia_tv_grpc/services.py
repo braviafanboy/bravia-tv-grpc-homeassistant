@@ -61,12 +61,22 @@ _COMPARE = vol.Schema(
 _CURVES = vol.Schema({**_TV, vol.Required("curves"): dict})
 
 
+def _device_entry_ids(device: dr.DeviceEntry) -> set[str]:
+    """The config entry IDs a device belongs to.
+
+    HA 2026.8 gave a device a single ``config_entry_id`` and deprecated the
+    ``config_entries`` set (removed in 2027.10); older cores only have the set.
+    """
+    entry_id = getattr(device, "config_entry_id", None)
+    return {entry_id} if entry_id else set(device.config_entries)
+
+
 def _coordinator(hass: HomeAssistant, call: ServiceCall):
     """The TV (its coordinator) named by the call's device_id."""
     loaded = hass.data.get(DOMAIN, {})
     device = dr.async_get(hass).async_get(call.data[ATTR_DEVICE_ID])
     if device is not None:
-        for entry_id in device.config_entries:
+        for entry_id in _device_entry_ids(device):
             if entry_id in loaded:
                 return loaded[entry_id]
     raise ServiceValidationError(

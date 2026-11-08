@@ -26,7 +26,9 @@ jobs:
           else
             RANGE="HEAD~20..HEAD"
           fi
-          bad=$(git log --format='%h %ae %ce' "$RANGE" 2>/dev/null | awk '$2 !~ /@users\.noreply\.github\.com$/ || $3 !~ /@users\.noreply\.github\.com$/' || true)
+          # GitHub itself commits Dependabot PRs merged on github.com
+          # (committer noreply@github.com); that is not a personal identity.
+          bad=$(git log --format='%h %ae %ce' "$RANGE" 2>/dev/null | awk '$2 !~ /@users\.noreply\.github\.com$/ || ($3 !~ /@users\.noreply\.github\.com$/ && $3 != "noreply@github.com")' || true)
           if [ -n "$bad" ]; then
             echo "Commits with a personal identity (use the project no-reply address):"; echo "$bad"; exit 1
           fi
@@ -39,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
           # Keyed on its own requirements file (distinct from the tests job's
           # key, so the two jobs don't share — and clobber — one cache entry).
@@ -68,23 +70,28 @@ jobs:
           category: integration
 
   tests:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (${{ matrix.ha }} HA)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # 3.13 is the newest Python for the oldest supported HA (2025.11);
-        # HA 2026.3+ requires 3.14, so 3.14 tests current HA.
-        python-version: ["3.13", "3.14"]
+        include:
+          # The oldest supported HA (hacs.json "homeassistant", 2026.3.0).
+          # pytest-homeassistant-custom-component 0.13.317 is its first test
+          # package (it pins HA 2026.3.1). Raise this with hacs.json.
+          - ha: minimum
+            pin: pytest-homeassistant-custom-component==0.13.317
+          - ha: latest
+            pin: ""
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: requirements-dev.txt
       # requirements-dev.txt carries the runtime deps (grpcio/protobuf, kept in
       # step with manifest.json) plus pytest-homeassistant-custom-component,
       # which pulls HA for the config-flow/coordinator tests.
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-dev.txt ${{ matrix.pin }}
       - run: pytest tests/ -q

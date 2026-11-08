@@ -46,3 +46,22 @@ def _no_agent_probe(request):
             yield
     except ImportError:
         yield
+
+
+@pytest.fixture(autouse=True)
+def _no_ha_usage_reports(caplog):
+    """Fail a test when Home Assistant reports that this integration uses a
+    deprecated or incorrect API ("Detected that custom integration
+    'bravia_tv_grpc' ..."). HA only logs these, and the message names the HA
+    version that will break, so turning them into failures catches a
+    deprecation the day it appears."""
+    yield
+    reports = [
+        record.getMessage()
+        for phase in ("setup", "call")
+        for record in caplog.get_records(phase)
+        if record.name == "homeassistant.helpers.frame"
+        and "custom integration 'bravia_tv_grpc'" in record.getMessage()
+    ]
+    if reports:
+        pytest.fail("Home Assistant reported:\n" + "\n".join(reports), pytrace=False)

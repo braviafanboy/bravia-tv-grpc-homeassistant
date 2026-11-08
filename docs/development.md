@@ -44,13 +44,18 @@ Issues and pull requests are welcome.
 ## Setup
 
 ```sh
-python3.13 -m venv .venv && source .venv/bin/activate
+python3.14 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
 
-Home Assistant, pulled in by `pytest-homeassistant-custom-component`, does not
-build on Python 3.14 yet, so use Python 3.13 for the full test suite. The pure
-wire-decode tests run on any Python.
+This tests against the latest Home Assistant. CI also runs the suite against
+the oldest supported release (`hacs.json`); to do the same locally, use a
+second environment and add the pinned test package from
+`.github/workflows/validate.yml` to the install. The pure wire-decode tests
+run on any Python.
+
+A test fails if Home Assistant logs that the integration uses a deprecated or
+incorrect API ("Detected that custom integration 'bravia_tv_grpc' ...").
 
 ## Tools
 

@@ -51,7 +51,7 @@ is authoritative. Older TVs that use *Video & TV SideView* are not compatible.
 
 You need:
 
-- **Home Assistant 2025.11 or newer**, on the same network as the TV.
+- **Home Assistant 2026.3 or newer**, on the same network as the TV.
   Reserve a fixed IP address for the TV on your router.
 - **The TV signed in to a Sony account in the BRAVIA Connect app.** The
   integration gets its keys through that account, so pair the TV in BRAVIA
