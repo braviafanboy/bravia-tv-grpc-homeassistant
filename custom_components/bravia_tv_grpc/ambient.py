@@ -9,7 +9,7 @@ and mirrors it through the agent's ``ambient`` block:
 - six numbers: the current picture mode's curve, the slider value at fixed
   light levels (they show and edit whichever mode is active, as the TV's own
   picture menu does);
-- a button to reset the current mode's curve to the shared default;
+- a button to drop the current mode's own curve, back to what it started from;
 - a status sensor saying whether it is active, and why not.
 """
 
@@ -125,7 +125,8 @@ class BraviaTvAmbientAnchor(BraviaTvAmbientEntity, NumberEntity):
 
 
 class BraviaTvAmbientResetButton(BraviaTvAmbientEntity, ButtonEntity):
-    """Drop the current picture mode's own curve; it follows the default again."""
+    """Drop the current picture mode's own curve; it follows what it started
+    from again (or the shared curve, if one was set)."""
 
     _attr_translation_key = "ambient_reset"
     _attr_entity_category = EntityCategory.CONFIG

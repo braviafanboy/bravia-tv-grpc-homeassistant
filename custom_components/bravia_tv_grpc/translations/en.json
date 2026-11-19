@@ -703,7 +703,7 @@
     },
     "set_ambient_curves": {
       "name": "Set ambient brightness curves",
-      "description": "Replace the HA TV Agent's ambient brightness curves: a default and, optionally, one per picture mode, each the Brightness slider (0-50) at 0, 10, 25, 60, 150 and 500 lux.",
+      "description": "Replace the HA TV Agent's ambient brightness curves: one per picture mode and, optionally, a default shared by the modes that have none of their own, each the Brightness slider (0-50) at 0, 10, 25, 60, 150 and 500 lux. Without a default, each mode starts from its own brightness.",
       "fields": {
         "device_id": {
           "name": "TV",
@@ -711,7 +711,7 @@
         },
         "curves": {
           "name": "Curves",
-          "description": "The ambient brightness curves to set: a default plus optional per-picture-mode curves, each six Brightness values (0-50). Copy the shape returned by Get ambient brightness curves."
+          "description": "The ambient brightness curves to set: per-picture-mode curves and an optional default, each six Brightness values (0-50). A default of null removes the shared default. Copy the shape returned by Get ambient brightness curves."
         }
       }
     },

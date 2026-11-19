@@ -258,7 +258,8 @@ separate picture values for HDR and Dolby Vision).
 - **Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux** (numbers) — the
   current picture mode's curve; they show and edit whichever mode is active.
 - **Reset ambient brightness curve** (button) — drops the current mode's own
-  curve so it follows the shared default again.
+  curve, back to what the mode started from: a curve that reaches the
+  brightness the mode had when ambient brightness first ran in it.
 - **Ambient brightness status** (sensor) — off, active, paused or not
   available, with the reason and the curves as attributes.
 

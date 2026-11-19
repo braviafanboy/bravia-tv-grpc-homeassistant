@@ -139,7 +139,7 @@ these entities edit and mirror it. Off by default.
 | `switch` Ambient brightness | On/off |
 | `switch` Ambient brightness learning | How a manual brightness change is treated: on, it learns the new value for the current light and holds a minute before resuming; off, it switches ambient brightness off until you turn it back on |
 | `number` Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux | The current picture mode's curve (0-50); they show and edit whichever mode is active |
-| `button` Reset ambient brightness curve | The current mode follows the shared default again |
+| `button` Reset ambient brightness curve | The current mode goes back to the curve it started from |
 | `sensor` Ambient brightness status | Off, active, paused or not available (state `not_available`); `reason`, `picture_mode`, `target`, `lux` and all `curves` as attributes. The readings and curves are not kept in history |
 
 Actions taking the TV as `device_id`: `bravia_tv_grpc.get_ambient_curves`
