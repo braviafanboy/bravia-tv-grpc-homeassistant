@@ -136,7 +136,7 @@ these entities edit and mirror it. Off by default.
 
 | Entity | What it does |
 |---|---|
-| `switch` Ambient brightness | On/off |
+| `switch` Ambient brightness | On/off for the picture mode the TV is in; each mode remembers its own (agent 0.10.0; one switch for the TV before) |
 | `switch` Ambient brightness learning | How a manual brightness change is treated: on, it learns the new value for the current light and holds a minute before resuming; off, it switches ambient brightness off until you turn it back on |
 | `number` Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux | The current picture mode's curve (0-50); they show and edit whichever mode is active |
 | `button` Reset ambient brightness curve | The current mode goes back to the curve it started from |

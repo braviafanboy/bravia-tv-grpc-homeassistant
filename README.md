@@ -249,7 +249,11 @@ the TV, so it keeps working even while Home Assistant is down; Home Assistant
 edits and mirrors it. It is **off by default** and SDR only (the TV keeps
 separate picture values for HDR and Dolby Vision).
 
-- **Ambient brightness** (switch) — turns it on and off.
+- **Ambient brightness** (switch) — turns it on and off for the picture mode
+  the TV is in, and shows that mode's setting. Each picture mode remembers its
+  own: change to a mode where it is off and the brightness is left alone,
+  change back and it carries on. (With an agent before 0.10.0 it is one switch
+  for the whole TV.)
 - **Ambient brightness learning** (switch) — chooses how a *manual* brightness
   change is treated. With learning **off**, changing Brightness by hand switches
   ambient brightness off until you turn it back on. With learning **on**, it

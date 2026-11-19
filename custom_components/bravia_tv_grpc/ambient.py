@@ -5,7 +5,8 @@ the room's light level with a curve per picture mode (SDR only), and pauses
 or learns when someone changes the brightness by hand. Home Assistant edits
 and mirrors it through the agent's ``ambient`` block:
 
-- switches: on/off, and learning from manual changes;
+- switches: on/off (for the picture mode the TV is in; the agent remembers
+  it per mode), and learning from manual changes;
 - six numbers: the current picture mode's curve, the slider value at fixed
   light levels (they show and edit whichever mode is active, as the TV's own
   picture menu does);
@@ -166,6 +167,7 @@ class BraviaTvAmbientStatusSensor(BraviaTvAmbientEntity, SensorEntity):
         keys = (
             "reason",
             "picture_mode",
+            "enabled_modes",
             "brightness",
             "target",
             "lux",
