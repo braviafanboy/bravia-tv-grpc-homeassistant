@@ -64,7 +64,7 @@ from .grpc import agent as agentmod
 from .grpc import cloud_commands as cloud
 from .grpc import credentials as cred
 from .grpc.application_list import APPLICATION_LIST_PATH
-from .util import parse_json_value
+from .util import friendly_enum_label, parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
 # A token answer covers the agent's token_needed for this long.
@@ -290,6 +290,10 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # attributes: {name: {picture_mode, dynamic_range, settings, created}}.
         self._profile_meta: dict[str, dict[str, Any]] = {}
         self._selected_profile: str | None = None
+        # The picture mode a restore goes into: None = "From saved profile".
+        # Reset to the chosen profile's own mode whenever a profile is chosen;
+        # picking another target is a deliberate per-restore override.
+        self._restore_target: str | None = None
         # Name typed in the "New profile name" text box, consumed by the Save
         # picture profile button (so the whole save flow lives on the device
         # page, no Developer Tools).
@@ -891,17 +895,79 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             settings["brightness"] = brightness
         return mode, settings
 
+    def _profile_fits_range(self, name: str) -> bool:
+        """Whether a saved profile belongs to the dynamic range playing now
+        (SDR / HDR10 / Dolby Vision); profiles from before the range stamp fit
+        every range."""
+        saved = (self._profile_meta.get(name) or {}).get("dynamic_range")
+        return not saved or saved == self._current_hdr_class()
+
     @property
     def picture_profile_names(self) -> list[str]:
-        return self._profile_names
+        """The profiles for the current dynamic range (the dropdown's options;
+        rebuilt as the range changes)."""
+        return [n for n in self._profile_names if self._profile_fits_range(n)]
 
     @property
     def selected_picture_profile(self) -> str | None:
-        return self._selected_profile
+        """The chosen profile, while it fits the current range (it comes back
+        when the range does)."""
+        name = self._selected_profile
+        return name if name and self._profile_fits_range(name) else None
 
     async def async_select_picture_profile(self, name: str) -> None:
         self._selected_profile = name
+        self._reset_restore_target()
         self.async_set_updated_data(dict(self._state))
+
+    # The restore target ("Restore to picture mode")
+
+    def restore_mode_candidates(self) -> list[str]:
+        """The picture modes the TV offers right now (REST pictureMode)."""
+        info = self._current_picture_targets().get(picture_profiles.MODE_TARGET)
+        if not isinstance(info, dict):
+            return []
+        return [
+            str(c["value"])
+            for c in info.get("candidates") or []
+            if isinstance(c, dict) and c.get("value")
+        ]
+
+    def _reset_restore_target(self) -> None:
+        """Point the restore target at the chosen profile's own picture mode,
+        or "From saved profile" when it has none or the TV doesn't offer it."""
+        name = self._selected_profile
+        mode = (
+            (self._profile_meta.get(name) or {}).get("picture_mode") if name else None
+        )
+        self._restore_target = mode if mode in self.restore_mode_candidates() else None
+
+    @property
+    def restore_target(self) -> str | None:
+        """The effective target: a mode the TV offers now, else None ("From
+        saved profile")."""
+        target = self._restore_target
+        return target if target in self.restore_mode_candidates() else None
+
+    async def async_set_restore_target(self, mode: str | None) -> None:
+        self._restore_target = mode
+        self.async_set_updated_data(dict(self._state))
+
+    def _resolve_picture_mode(self, value: str) -> str:
+        """A picture mode the TV offers now, given as its value
+        (``customForPro2``) or label ("Custom for Pro 2")."""
+        wanted = value.strip()
+        for mode in self.restore_mode_candidates():
+            if (
+                wanted == mode
+                or wanted.casefold() == friendly_enum_label(mode).casefold()
+            ):
+                return mode
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="picture_mode_unavailable",
+            translation_placeholders={"name": self.device_name, "mode": value},
+        )
 
     @property
     def profile_name_input(self) -> str:
@@ -929,13 +995,13 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_delete_selected_picture_profile(self) -> dict:
         """Delete the profile chosen in the select (the Delete button)."""
-        if not self._selected_profile:
+        if not self.selected_picture_profile:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="picture_profile_none_selected",
                 translation_placeholders={"name": self.device_name},
             )
-        return await self.async_delete_picture_profile(self._selected_profile)
+        return await self.async_delete_picture_profile(self.selected_picture_profile)
 
     def _resolve_profile_slug(self) -> str:
         """The persisted name of this TV's profile folder, or a fresh one.
@@ -982,9 +1048,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _refresh_profile_names(self) -> None:
         await self._load_profiles()
         if self._selected_profile not in self._profile_names:
-            self._selected_profile = (
-                self._profile_names[0] if self._profile_names else None
-            )
+            visible = self.picture_profile_names
+            self._selected_profile = visible[0] if visible else None
+            self._reset_restore_target()
         # Keep the signature current so our own write doesn't look like an
         # external change on the next scan tick.
         self._profiles_signature = await self._picture_profiles.async_signature()
@@ -1041,6 +1107,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._picture_profiles.put(name, profile)
         self._selected_profile = name
         await self._refresh_profile_names()
+        self._reset_restore_target()
+        self.async_set_updated_data(dict(self._state))
         return {
             "name": name,
             "picture_mode": mode,
@@ -1050,9 +1118,14 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     async def async_restore_picture_profile(
-        self, name: str, force: bool = False
+        self, name: str, force: bool = False, picture_mode: str | None = None
     ) -> dict:
         """Write a saved profile back to the TV; returns applied/failed.
+
+        ``picture_mode`` restores into that mode (value or label, one the TV
+        offers now) instead of the profile's own, e.g. a calibration saved in
+        Custom for Pro 1 into Custom for Pro 2. Settings the target mode
+        doesn't have come back in ``failed``.
 
         Refuses if the profile's dynamic-range class (SDR/HDR/Dolby Vision) does
         not match what is playing now, since the TV keeps separate picture values
@@ -1066,6 +1139,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_placeholders={"name": name},
             )
         agent = self._require_agent()
+        target_mode = self._resolve_picture_mode(picture_mode) if picture_mode else None
         if not self.agent_value("rest", "write_authorized"):
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -1090,7 +1164,8 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             None,
             "off",
         )
-        mode = profile.get("picture_mode")
+        saved_mode = profile.get("picture_mode")
+        mode = target_mode or saved_mode
         stored = profile.get("settings", {})
         try:
             if mode:
@@ -1144,6 +1219,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {
             "name": name,
             "picture_mode": mode,
+            "saved_picture_mode": saved_mode,
             "hdr_class": current_class,
             "model": profile_model,
             # Soft signal (not a block): the profile was made on another model,
@@ -1183,14 +1259,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {"applied": applied, "failed": failed, "results": results}
 
     async def async_restore_selected_picture_profile(self) -> dict:
-        """Restore the profile chosen in the select entity (the restore button)."""
-        if not self._selected_profile:
+        """Restore the profile chosen in the select entity (the restore button),
+        into the picture mode chosen in "Restore to picture mode"."""
+        name = self.selected_picture_profile
+        if not name:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="picture_profile_none_selected",
                 translation_placeholders={"name": self.device_name},
             )
-        return await self.async_restore_picture_profile(self._selected_profile)
+        return await self.async_restore_picture_profile(
+            name, picture_mode=self.restore_target
+        )
 
     async def async_delete_picture_profile(self, name: str) -> dict:
         removed = await self._picture_profiles.delete(name)

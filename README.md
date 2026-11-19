@@ -141,11 +141,17 @@ page, no automations required:
 - **New profile name** (text) — type a name here.
 - **Save picture profile** (button) — snapshots the current settings under that
   name; the box then clears.
-- **Picture profile** (dropdown) — your saved profiles; picking one only
-  *selects* it (it does not touch the TV).
+- **Picture profile** (dropdown) — your saved profiles for the dynamic range
+  playing now (SDR, HDR10 or Dolby Vision; the list follows the content).
+  Picking one only *selects* it (it does not touch the TV).
+- **Restore to picture mode** (dropdown) — the picture mode a restore goes
+  into. Picking a profile sets it to that profile's own mode; choose another
+  mode to copy a calibration across, e.g. from Custom for Pro 1 into Custom for
+  Pro 2. "From saved profile" uses the profile's own mode (or keeps the current
+  one if it has none).
 - **Restore picture profile** (button) — writes the selected profile back to
   the TV. It sets the picture mode first, then only the settings that differ, so
-  a restore is quick.
+  a restore is quick. Settings the target mode doesn't have are skipped.
 - **Delete picture profile** (button) — removes the selected profile.
 
 A typical calibration session: save a *before* profile, make changes, save an
@@ -168,7 +174,8 @@ screen.
 
 Everything is on the TV's device page (Settings → Devices & services → your
 TV), grouped under **Configuration**: the **New profile name** box, **Save**,
-the **Picture profile** dropdown, **Restore** and **Delete**. That's the whole
+the **Picture profile** and **Restore to picture mode** dropdowns, **Restore**
+and **Delete**. That's the whole
 save → pick → restore/delete loop — no dashboard needed. Open the dropdown to
 see the selected profile's details (picture mode, dynamic range, model, when
 saved), which it also exposes as attributes.
@@ -180,7 +187,8 @@ entities, with `type: attribute` rows on the select for the inline details.
 
 For automations and scripts the same operations are actions that take the
 TV as their `device_id`: `bravia_tv_grpc.save_picture_profile`, `restore_picture_profile`
-(with `force` to skip the dynamic-range check), `delete_picture_profile`,
+(with `force` to skip the dynamic-range check and `picture_mode` to restore into
+another mode), `delete_picture_profile`,
 `list_picture_profiles` and `compare_picture_profiles` (which return data).
 
 A hand-made file can hold just a subset of settings (e.g. only the 2-point

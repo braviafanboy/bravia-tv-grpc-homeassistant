@@ -505,3 +505,119 @@ async def test_restore_falls_back_to_per_setting_on_old_agent(hass: HomeAssistan
     # per-setting writes used instead of the batch
     assert c.agent.async_set_picture.await_count >= 2  # contrast + color at least
     assert res["applied"] >= 2 and res["failed"] == 0
+
+
+# ---- restore target ("Restore to picture mode") and the range filter --------
+
+
+def _offer_modes(c, *modes: str, current: str = "customForPro1") -> None:
+    """The TV offers these picture modes now; ``current`` is active."""
+    targets = c._state[agent_path("picture")]["targets"]
+    targets["pictureMode"] = {
+        "value": current,
+        "available": True,
+        "candidates": [{"value": m} for m in modes],
+    }
+    c._state[pp.GRPC_MODE_PATH] = current
+
+
+async def test_choosing_a_profile_sets_the_restore_target(hass: HomeAssistant):
+    c = _coordinator(hass)
+    _offer_modes(c, "professional", "customForPro1", "customForPro2")
+    await c.async_save_picture_profile("pro1")  # saved in customForPro1
+    assert c.restore_target == "customForPro1"
+    # A deliberate override...
+    await c.async_set_restore_target("customForPro2")
+    assert c.restore_target == "customForPro2"
+    # ...is reset by choosing a profile again.
+    await c.async_select_picture_profile("pro1")
+    assert c.restore_target == "customForPro1"
+
+
+async def test_restore_target_falls_back_to_saved_profile(hass: HomeAssistant):
+    c = _coordinator(hass)
+    _offer_modes(c, "customForPro1", "customForPro2")
+    await c.async_save_picture_profile("pro1")
+    # The TV no longer offers the profile's mode (e.g. another source).
+    _offer_modes(c, "standard", "cinema", current="standard")
+    await c.async_select_picture_profile("pro1")
+    assert c.restore_target is None  # "From saved profile"
+    # A target that stops being offered also reads as "From saved profile".
+    _offer_modes(c, "customForPro1", "customForPro2")
+    await c.async_set_restore_target("customForPro2")
+    _offer_modes(c, "customForPro1")
+    assert c.restore_target is None
+
+
+async def test_restore_selected_into_another_mode(hass: HomeAssistant):
+    c = _coordinator(hass)
+    c._state[agent_path("ambient")] = {"enabled": True}
+    c.agent.async_ambient = AsyncMock(return_value={"enabled": True})
+    _offer_modes(c, "customForPro1", "customForPro2")
+    await c.async_save_picture_profile("pro1")
+    await c.async_set_restore_target("customForPro2")
+    res = await c.async_restore_selected_picture_profile()
+    c.agent.async_set_picture.assert_awaited_once_with("pictureMode", "customForPro2")
+    assert res["picture_mode"] == "customForPro2"
+    assert res["saved_picture_mode"] == "customForPro1"
+    # The learner resets the curve of the mode actually written.
+    c.agent.async_ambient.assert_awaited_once_with("reset", {"mode": "customForPro2"})
+
+
+async def test_restore_action_picture_mode_by_value_or_label(hass: HomeAssistant):
+    from custom_components.bravia_tv_grpc.util import friendly_enum_label
+
+    c = _coordinator(hass)
+    _offer_modes(c, "customForPro1", "customForPro2")
+    await c.async_save_picture_profile("pro1")
+    await c.async_restore_picture_profile("pro1", picture_mode="customForPro2")
+    c.agent.async_set_picture.assert_awaited_with("pictureMode", "customForPro2")
+    label = friendly_enum_label("customForPro2")
+    await c.async_restore_picture_profile("pro1", picture_mode=label.upper())
+    c.agent.async_set_picture.assert_awaited_with("pictureMode", "customForPro2")
+    with pytest.raises(ServiceValidationError) as err:
+        await c.async_restore_picture_profile("pro1", picture_mode="vivid")
+    assert err.value.translation_key == "picture_mode_unavailable"
+
+
+async def test_profile_list_follows_dynamic_range(hass: HomeAssistant):
+    from custom_components.bravia_tv_grpc.coordinator import _SIGNAL_VIDEO
+
+    c = _coordinator(hass)
+    await c.async_save_picture_profile("sdr cal")
+    c._state[_SIGNAL_VIDEO] = '[{"hdr_type": "hdr10"}]'
+    await c.async_save_picture_profile("hdr cal")
+    assert c.picture_profile_names == ["hdr cal"]
+    assert c.selected_picture_profile == "hdr cal"
+    # Back to SDR: only SDR profiles; the HDR selection is hidden, not lost.
+    c._state[_SIGNAL_VIDEO] = "[]"
+    assert c.picture_profile_names == ["sdr cal"]
+    assert c.selected_picture_profile is None
+    with pytest.raises(ServiceValidationError):
+        await c.async_restore_selected_picture_profile()
+    c._state[_SIGNAL_VIDEO] = '[{"hdr_type": "hdr10"}]'
+    assert c.selected_picture_profile == "hdr cal"
+
+
+async def test_restore_target_select_entity(hass: HomeAssistant):
+    from custom_components.bravia_tv_grpc.select import (
+        FROM_SAVED_PROFILE,
+        BraviaTvRestoreTargetSelect,
+    )
+    from custom_components.bravia_tv_grpc.util import friendly_enum_label
+
+    c = _coordinator(hass)
+    _offer_modes(c, "customForPro1", "customForPro2")
+    await c.async_save_picture_profile("pro1")
+    entity = BraviaTvRestoreTargetSelect(c)
+    pro1, pro2 = (
+        friendly_enum_label("customForPro1"),
+        friendly_enum_label("customForPro2"),
+    )
+    assert entity.options == [FROM_SAVED_PROFILE, pro1, pro2]
+    assert entity.current_option == pro1
+    await entity.async_select_option(pro2)
+    assert c.restore_target == "customForPro2"
+    await entity.async_select_option(FROM_SAVED_PROFILE)
+    assert c.restore_target is None
+    assert entity.current_option == FROM_SAVED_PROFILE

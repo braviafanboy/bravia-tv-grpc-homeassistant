@@ -119,6 +119,7 @@ async def async_setup_entry(
         entities.append(BraviaTvPowerSavingSelect(coordinator))
     if coordinator.agent_expected:
         entities.append(BraviaTvPictureProfileSelect(coordinator))
+        entities.append(BraviaTvRestoreTargetSelect(coordinator))
     async_add_entities(entities)
     if coordinator.rest_writable:
         async_add_picture_entities(
@@ -407,3 +408,42 @@ class BraviaTvPictureProfileSelect(BraviaTvAgentEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         await self.coordinator.async_select_picture_profile(option)
+
+
+FROM_SAVED_PROFILE = "From saved profile"
+
+
+class BraviaTvRestoreTargetSelect(BraviaTvAgentEntity, SelectEntity):
+    """The picture mode the Restore picture profile button restores into.
+
+    Choosing a profile resets it to that profile's own picture mode (or "From
+    saved profile" when the profile has none or the TV doesn't offer it now);
+    picking another mode is a deliberate override for that restore, e.g. a
+    calibration saved in Custom for Pro 1 into Custom for Pro 2. Options are
+    the picture modes the TV offers right now."""
+
+    _attr_translation_key = "picture_profile_restore_mode"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: BraviaTvCoordinator) -> None:
+        super().__init__(coordinator, "display", "picture_profile_restore_mode")
+
+    def _labels(self) -> dict[str, str]:
+        return {
+            friendly_enum_label(mode): mode
+            for mode in self.coordinator.restore_mode_candidates()
+        }
+
+    @property
+    def options(self) -> list[str]:
+        return [FROM_SAVED_PROFILE, *self._labels()]
+
+    @property
+    def current_option(self) -> str | None:
+        target = self.coordinator.restore_target
+        return friendly_enum_label(target) if target else FROM_SAVED_PROFILE
+
+    async def async_select_option(self, option: str) -> None:
+        await self.coordinator.async_set_restore_target(
+            None if option == FROM_SAVED_PROFILE else self._labels().get(option)
+        )

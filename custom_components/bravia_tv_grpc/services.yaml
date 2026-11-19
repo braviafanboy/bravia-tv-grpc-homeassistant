@@ -84,6 +84,11 @@ restore_picture_profile:
       default: false
       selector:
         boolean:
+    picture_mode:
+      required: false
+      example: "Custom for Pro 2"
+      selector:
+        text:
 delete_picture_profile:
   fields:
     device_id:

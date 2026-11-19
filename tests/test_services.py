@@ -67,7 +67,9 @@ async def test_routes_to_the_targeted_tv(hass: HomeAssistant, tvs):
         {"device_id": dev_a.id, "name": "Calibrated", "force": True},
         blocking=True,
     )
-    a.async_restore_picture_profile.assert_awaited_once_with("Calibrated", True)
+    a.async_restore_picture_profile.assert_awaited_once_with(
+        "Calibrated", True, picture_mode=None
+    )
     b.async_restore_picture_profile.assert_not_awaited()
 
     await hass.services.async_call(

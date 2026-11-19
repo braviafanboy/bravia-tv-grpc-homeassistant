@@ -151,6 +151,9 @@
     },
     "dashboard_no_owner": {
       "message": "Finish setting up Home Assistant (create its owner account) before showing dashboards on the TV."
+    },
+    "picture_mode_unavailable": {
+      "message": "{name} doesn't offer the picture mode {mode} right now. Choose one of the modes in Restore to picture mode."
     }
   },
   "entity": {
@@ -298,6 +301,9 @@
       },
       "picture_profile": {
         "name": "Picture profile"
+      },
+      "picture_profile_restore_mode": {
+        "name": "Restore to picture mode"
       }
     },
     "sensor": {
@@ -582,6 +588,10 @@
         "force": {
           "name": "Force across dynamic range",
           "description": "Restore even if the profile was captured in a different dynamic range (SDR/HDR/Dolby Vision) than what is playing. Off by default, since the TV keeps separate picture values per range."
+        },
+        "picture_mode": {
+          "name": "Picture mode",
+          "description": "Restore into this picture mode instead of the profile's own, for example Custom for Pro 2 for a calibration saved in Custom for Pro 1. It must be a mode the TV offers right now. Settings that mode doesn't have are skipped."
         }
       }
     },

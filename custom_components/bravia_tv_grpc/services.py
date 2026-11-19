@@ -53,6 +53,7 @@ _RESTORE = vol.Schema(
         **_TV,
         vol.Required("name"): cv.string,
         vol.Optional("force", default=False): cv.boolean,
+        vol.Optional("picture_mode"): cv.string,
     }
 )
 _COMPARE = vol.Schema(
@@ -107,7 +108,9 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     async def restore_picture_profile(call: ServiceCall) -> ServiceResponse:
         return await _coordinator(hass, call).async_restore_picture_profile(
-            call.data["name"], call.data["force"]
+            call.data["name"],
+            call.data["force"],
+            picture_mode=call.data.get("picture_mode"),
         )
 
     async def delete_picture_profile(call: ServiceCall) -> None:
