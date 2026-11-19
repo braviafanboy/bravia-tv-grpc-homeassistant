@@ -33,9 +33,13 @@ MAX_SETTINGS = 200
 MAX_KEY_LEN = 64
 MAX_VALUE_LEN = 512
 MAX_NAME_LEN = 128
+MAX_NAME_BYTES = 240
 # The picture mode is captured as metadata and restored first (settings are
 # per-mode), not written as one of the profile's settings.
 MODE_TARGET = "pictureMode"
+# The profile a restore writes first: the settings it is about to overwrite.
+# One rolling copy, so the last restore can always be taken back.
+BACKUP_NAME = "Before last restore"
 # Written by the TV's own ambient-light adjustment; a restore is meaningless
 # while it is on, so a restore flags it.
 AUTO_LUMINANCE_TARGET = "autoLuminanceLevel"
@@ -116,7 +120,7 @@ class _SafeNoAliasLoader(yaml.SafeLoader):
     """SafeLoader that also forbids YAML aliases, so a crafted file cannot use
     anchor/alias expansion ("billion laughs") to exhaust memory on read."""
 
-    def compose_node(self, parent, index):  # type: ignore[override]
+    def compose_node(self, parent, index):
         if self.check_event(yaml.events.AliasEvent):
             raise yaml.constructor.ConstructorError(
                 None, None, "YAML aliases are not allowed in picture profiles"
@@ -130,6 +134,8 @@ def is_valid_profile_name(name: Any) -> bool:
     return (
         isinstance(name, str)
         and 0 < len(name) <= MAX_NAME_LEN
+        # Filesystems cap a name at 255 bytes; leave room for ".yaml.tmp".
+        and len(name.encode("utf-8")) <= MAX_NAME_BYTES
         and "/" not in name
         and "\\" not in name
         and name not in (".", "..")

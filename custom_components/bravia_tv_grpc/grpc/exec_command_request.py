@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+from .keys import hmac_key_bytes
 from .wire import encode_signed_varint, encode_varint
 
 
@@ -111,19 +112,7 @@ def sign_exec_auth_token(
     any_value: str | None = None,
 ) -> bytes:
     """Compute rolling ExecCommandWithAuth auth_token from Sony Seeds hmac_key."""
-    try:
-        key_bytes = (
-            bytes.fromhex(hmac_key_hex)
-            if len(hmac_key_hex) == 64
-            else hmac_key_hex.encode("utf-8")[:32].ljust(32, b"\x00")
-        )
-    except ValueError as exc:
-        msg = "hmac_key_hex must be valid hex"
-        raise ValueError(msg) from exc
-    if len(key_bytes) != 32:
-        msg = f"hmac_key must be 32 bytes, got {len(key_bytes)}"
-        raise ValueError(msg)
-
+    key_bytes = hmac_key_bytes(hmac_key_hex)
     preimage = build_exec_command_signing_preimage(
         command_path,
         session_random=session_random,

@@ -11,6 +11,7 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.exceptions import HomeAssistantError  # noqa: E402
 
 from custom_components.bravia_tv_grpc.const import (  # noqa: E402
     CONF_AGENT_CERT,
@@ -66,14 +67,9 @@ def _no_manifest_fetch():
         yield
 
 
-@pytest.fixture(autouse=True)
-def _stub_ssl():
-    """The fakes never open sockets; keep certificate handling symbolic for
-    the whole test, including the background task that pins after pairing."""
-    with patch(
-        f"{COORD}.agentmod.make_ssl_context", side_effect=lambda cert: ("ctx", cert)
-    ):
-        yield
+# A polling helper must keep yielding to the loop even while a test replaces
+# asyncio.sleep (the tests patch it process-wide to skip the pairing waits).
+_real_sleep = asyncio.sleep
 
 
 def _client() -> MagicMock:
@@ -108,19 +104,33 @@ class FakeAgent:
 
     PRESENTED = b"cert-A"  # the certificate the fake "presents"
 
-    def __init__(
-        self, session, host, port=8585, token=None, ssl_context=None, cert=None
-    ):
+    def __init__(self, session, host, port=8585, token=None, fingerprint=None):
         self.host = host
         self.port = port
         self.token = token
-        self.ssl_context = ssl_context
-        self.cert = cert  # the pinned certificate, if any
-        self.seen_cert = None
+        self.fingerprint = fingerprint  # SHA-256 of the pinned certificate, if any
+        self.fingerprint_reads = 0
+        self.requests: list[tuple[str, bool]] = []  # (call, pinned at the time)
         self.info = dict(_INFO)
         self.state_doc = dict(_DOC)
         self.events: asyncio.Queue = asyncio.Queue()
         self.pair_tokens: list[str] = []
+        # An agent from before 0.10 unless ``by_code()`` is called: the
+        # launch opens a window, and the first to ask gets the token. From
+        # 0.10 on a request gets a code, the viewer allows or denies it on
+        # the TV (``accepted``, ``denied``), and only then is it collected.
+        self.legacy = True
+        self.window_open = False
+        self.pending: str | None = None
+        self.revealed = False
+        self.accepted = False
+        self.denied = False
+        self.busy_for: int | None = None  # someone else's request is waiting
+        self.lapse = False  # the request lapses unanswered
+        self.launches = 0
+        self.pairing: list[str] = []  # what happened, in order
+        self.setup_armed = 0
+        self.has_setup_call = True
         self.ambient_calls: list[tuple[str, dict]] = []
         self.reject_token: str | None = None
         self.stream_started = asyncio.Event()
@@ -141,28 +151,32 @@ class FakeAgent:
         return self.base_url + path
 
     @property
-    def pinned(self):
-        return self.cert is not None
+    def presented(self):
+        """SHA-256 of the certificate this fake "presents"."""
+        return agentmod.fingerprint_of(self.PRESENTED)
 
     @property
-    def fingerprint(self):
-        return agentmod.fingerprint_of(self.cert) if self.cert else None
+    def pinned(self):
+        return self.fingerprint is not None
 
-    def pin(self, cert, ssl_context):
-        self.cert = cert
-        self.ssl_context = ssl_context
+    def pin(self, fingerprint):
+        self.fingerprint = fingerprint
 
-    def _handshake(self):
-        if self.cert is not None and self.cert != self.PRESENTED:
-            raise agentmod.AgentFingerprintMismatch("pin")
-        self.seen_cert = self.PRESENTED
+    def _handshake(self, call="request"):
+        if self.fingerprint is not None and self.fingerprint != self.presented:
+            raise agentmod.AgentFingerprintMismatch("pin", self.presented)
+        self.requests.append((call, self.pinned))
+
+    async def async_fetch_fingerprint(self):
+        self.fingerprint_reads += 1
+        return self.presented
 
     async def async_info(self):
-        self._handshake()
+        self._handshake("info")
         return self.info
 
     async def async_state(self):
-        self._handshake()
+        self._handshake("state")
         if not self.token or self.token == self.reject_token:
             raise agentmod.AgentUnauthorized("state")
         return self.state_doc
@@ -171,15 +185,66 @@ class FakeAgent:
         self.ambient_calls.append((sub, body))
         return {"enabled": False, "state": "off", "curve": [9, 9, 11, 15, 25, 25]}
 
-    async def async_pair(self, name):
-        self._handshake()
-        if not self.pair_tokens:
+    def by_code(self):
+        """Make this an agent from 0.10 on, which pairs by a compared code."""
+        self.legacy = False
+        self.info = {
+            **self.info,
+            "pairing": {"paired": bool(self.token), "method": "compare"},
+        }
+
+    def launched(self):
+        """The TV launched the agent app (the integration's gRPC app launch).
+        To an older agent that opens its pairing window; to one that pairs by
+        code it only brings the question before the viewer."""
+        self.launches += 1
+        self.pairing.append("launch")
+        if self.legacy:
+            self.window_open = True
+
+    async def async_pair_request(self, name):
+        self._handshake("pair")
+        self.pairing.append("request")
+        if self.legacy:
+            if self.window_open and self.pair_tokens:
+                self.token = self.pair_tokens.pop(0)
+                return self.token
             raise agentmod.AgentPairingClosed("closed")
+        if self.busy_for is not None:
+            raise agentmod.AgentPairingBusy(self.busy_for)
+        self.pending = "request-1"
+        self.revealed = self.accepted = self.denied = False
+        return agentmod.AgentPairRequest(self.pending, b"s" * 32, b"n" * 32, 30)
+
+    async def async_pair_reveal(self, asked):
+        self._handshake("pair")
+        self.pairing.append("reveal")
+        if asked.request_id != self.pending:
+            raise agentmod.AgentPairingClosed("gone")
+        self.revealed = True
+        return agentmod.pairing_code(asked.secret, asked.nonce, self.fingerprint)
+
+    async def async_pair_collect(self, request_id):
+        self._handshake("pair")
+        if "collect" not in self.pairing:
+            self.pairing.append("collect")
+        if request_id != self.pending or self.lapse:
+            raise agentmod.AgentPairingClosed("lapsed")
+        if self.denied:
+            raise agentmod.AgentPairingDenied("denied")
+        if not self.accepted or not self.pair_tokens:
+            return None
+        self.pending = None
         self.token = self.pair_tokens.pop(0)
         return self.token
 
+    async def async_arm_setup(self):
+        self.setup_armed += 1
+        self.pairing.append("setup")
+        return self.has_setup_call
+
     async def async_events(self):
-        self._handshake()
+        self._handshake("events")
         self.stream_started.set()
         while True:
             ev = await self.events.get()
@@ -191,6 +256,8 @@ class FakeAgent:
         return b"png"
 
     async def async_stage_update(self, url, sha256, version):
+        if not sha256 or not version:  # as the real client
+            raise agentmod.AgentError("update: no checksum or version")
         self.staged = (url, sha256, version)
 
     async def async_picture_config(self, poll_s, event_refresh, watch):
@@ -198,6 +265,7 @@ class FakeAgent:
         return {}
 
     async def async_set_psk(self, psk):
+        self._handshake("psk")
         self.psk_calls.append(psk)
         return self.psk_accept
 
@@ -223,7 +291,7 @@ async def _until(predicate, timeout=5.0):
     while not predicate():
         if loop.time() > deadline:
             raise AssertionError("condition not met in time")
-        await asyncio.sleep(0.01)
+        await _real_sleep(0.01)
 
 
 async def _start(hass, entry, fake_holder, *, configure=None, cloud_caps=None):
@@ -231,11 +299,11 @@ async def _start(hass, entry, fake_holder, *, configure=None, cloud_caps=None):
 
     The agent task starts eagerly inside ``async_start``, so anything the
     fake must know (pair tokens, …) is applied by ``configure`` at creation.
-    ``make_ssl_context`` is stubbed: the fakes never open sockets.
+    The fakes never open sockets.
     """
 
-    def factory(session, host, port=8585, token=None, ssl_context=None, cert=None):
-        fake = FakeAgent(session, host, port, token, ssl_context, cert)
+    def factory(session, host, port=8585, token=None, fingerprint=None):
+        fake = FakeAgent(session, host, port, token, fingerprint)
         if configure:
             configure(fake)
         fake_holder.append(fake)
@@ -245,7 +313,19 @@ async def _start(hass, entry, fake_holder, *, configure=None, cloud_caps=None):
         patch(f"{COORD}.agentmod.AgentClient", side_effect=factory),
         patch(f"{COORD}.BraviaTvCoordinator._async_load_cloud", new=AsyncMock()),
     ):
-        coordinator = BraviaTvCoordinator(hass, entry, _client())
+        client = _client()
+
+        def exec_command(path, value, *args, **kwargs):
+            # The app launch reaches the agent on the TV.
+            if path == "system_setting.application" and (
+                value == agentmod.AGENT_PACKAGE
+            ):
+                for fake in fake_holder:
+                    fake.launched()
+            return True
+
+        client.exec_command.side_effect = exec_command
+        coordinator = BraviaTvCoordinator(hass, entry, client)
         coordinator._state["power"] = True
         if cloud_caps:
             coordinator.cloud_capabilities = cloud_caps
@@ -292,8 +372,14 @@ async def test_pairs_via_local_launch_when_no_token(hass: HomeAssistant):
     assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(
         FakeAgent.PRESENTED
     )
-    assert entry.data[CONF_AGENT_CERT] == agentmod.encode_cert(FakeAgent.PRESENTED)
+    assert CONF_AGENT_CERT not in entry.data
     assert coordinator.data[AGENT_ONLINE] is True
+    # The certificate was read and pinned before the pairing request went
+    # out: nothing but the first, tokenless info call ran unpinned.
+    fake = fakes[0]
+    assert fake.fingerprint_reads == 1
+    assert [call for call, pinned in fake.requests if not pinned] == ["info"]
+    assert ("pair", True) in fake.requests
     await coordinator.async_shutdown()
 
 
@@ -326,6 +412,203 @@ async def test_never_pairs_through_the_cloud_deep_link(hass: HomeAssistant):
         "system_setting.application", agentmod.AGENT_PACKAGE
     )
     assert not [c for c in sent if c["name"] == "application.deep_link"]
+    await coordinator.async_shutdown()
+
+
+def _by_code(*tokens):
+    """Configure a fake as an agent that pairs by code, with tokens to give."""
+
+    def configure(fake):
+        fake.by_code()
+        fake.pair_tokens.extend(tokens)
+
+    return configure
+
+
+async def _pairing_flow(hass, entry, coordinator, *, prefix="agent_pairing_"):
+    """The repair's fix flow for this entry, once the repair is there."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.bravia_tv_grpc import repairs
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    issue_id = f"{prefix}{entry.entry_id}"
+    registry = ir.async_get(hass)
+    await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is not None)
+    issue = registry.async_get_issue(DOMAIN, issue_id)
+    assert issue.is_fixable
+    flow = await repairs.async_create_fix_flow(hass, issue_id, issue.data)
+    flow.hass = hass
+    return flow, registry, issue_id
+
+
+async def test_an_agent_that_pairs_by_code_waits_for_the_user(hass: HomeAssistant):
+    """Pairing with an agent from 0.10 on takes someone at the TV, so nothing
+    is started behind the user's back: no request, no launch, just a repair
+    to run when they are there."""
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_by_code("fresh"))
+    _flow, registry, issue_id = await _pairing_flow(hass, entry, coordinator)
+    for _ in range(20):
+        await _real_sleep(0)
+    fake = fakes[0]
+    assert registry.async_get_issue(DOMAIN, issue_id).translation_key == "agent_pairing"
+    assert fake.pairing == [] and fake.launches == 0
+    coordinator.client.exec_command.assert_not_called()
+    assert CONF_AGENT_TOKEN not in entry.data
+    assert coordinator.data.get(AGENT_ONLINE) is not True
+    await coordinator.async_shutdown()
+
+
+async def test_pairing_by_code_through_the_repair(hass: HomeAssistant):
+    """The whole of it: the user starts the repair, Home Assistant asks the
+    agent, reveals its secret, shows the code and opens the agent on the TV;
+    the token arrives once the viewer has allowed the request there."""
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_by_code("fresh"))
+    flow, registry, issue_id = await _pairing_flow(hass, entry, coordinator)
+    fake = fakes[0]
+
+    form = await flow.async_step_init()
+    assert form["type"] == "form" and form["step_id"] == "start"
+    form = await flow.async_step_start({})
+    assert form["type"] == "form" and form["step_id"] == "compare"
+    # The code shown is the one for this request and the pinned certificate.
+    code = agentmod.pairing_code(b"s" * 32, b"n" * 32, fake.presented)
+    assert form["description_placeholders"]["code"] == f"{code[:3]} {code[3:]}"
+    # Asked and revealed over the pinned connection, and only then launched.
+    assert fake.pairing[:2] == ["request", "reveal"]
+    assert fake.pairing.index("launch") > fake.pairing.index("reveal")
+    assert fake.fingerprint == fake.presented and fake.launches == 1
+    assert ("pair", False) not in fake.requests
+
+    # Submitting before the viewer has answered: not yet, and the code stays.
+    with patch("custom_components.bravia_tv_grpc.repairs._ANSWER_WAIT", 0.05):
+        again = await flow.async_step_compare({})
+    assert again["type"] == "form" and again["errors"] == {"base": "not_allowed_yet"}
+    assert again["description_placeholders"]["code"] == f"{code[:3]} {code[3:]}"
+    assert CONF_AGENT_TOKEN not in entry.data
+
+    # The viewer allows it on the TV. The token is collected without waiting
+    # for the user to come back to Home Assistant.
+    fake.accepted = True
+    await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "fresh")
+    assert entry.data[CONF_AGENT_FINGERPRINT] == fake.presented
+    await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is None)
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    done = await flow.async_step_compare({})
+    assert done["type"] == "create_entry"
+    await coordinator.async_shutdown()
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [("denied", "pairing_denied"), ("lapse", "pairing_lapsed")],
+)
+async def test_a_request_denied_or_left_unanswered_pairs_nothing(
+    hass: HomeAssistant, answer, reason
+):
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_by_code("unused"))
+    flow, registry, issue_id = await _pairing_flow(hass, entry, coordinator)
+    fake = fakes[0]
+    await flow.async_step_init()
+    await flow.async_step_start({})
+    setattr(fake, answer, True)
+    result = await flow.async_step_compare({})
+    assert result["type"] == "abort" and result["reason"] == reason
+    assert CONF_AGENT_TOKEN not in entry.data
+    assert fake.pair_tokens == ["unused"]
+    # The repair stays, for another try.
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    await coordinator.async_shutdown()
+
+
+async def test_pairing_is_not_started_while_another_request_waits(
+    hass: HomeAssistant,
+):
+    """Something else on the network asked the agent to pair a moment ago.
+    The user is told, and the agent is not opened on the TV."""
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+
+    def configure(fake):
+        fake.by_code()
+        fake.busy_for = 21
+        fake.pair_tokens.append("for-the-other-one")
+
+    coordinator = await _start(hass, entry, fakes, configure=configure)
+    flow, _registry, _issue_id = await _pairing_flow(hass, entry, coordinator)
+    fake = fakes[0]
+    await flow.async_step_init()
+    result = await flow.async_step_start({})
+    assert result["type"] == "abort" and result["reason"] == "pairing_busy"
+    assert result["description_placeholders"]["seconds"] == "21"
+    assert fake.launches == 0
+    coordinator.client.exec_command.assert_not_called()
+    assert CONF_AGENT_TOKEN not in entry.data
+    assert fake.pair_tokens == ["for-the-other-one"]
+    await coordinator.async_shutdown()
+
+
+async def test_pairing_cannot_start_while_the_tv_is_off(hass: HomeAssistant):
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(hass, entry, fakes, configure=_by_code("fresh"))
+    flow, _registry, _issue_id = await _pairing_flow(hass, entry, coordinator)
+    coordinator._state["power"] = False
+    await flow.async_step_init()
+    result = await flow.async_step_start({})
+    assert result["type"] == "abort" and result["reason"] == "agent_unreachable"
+    assert fakes[0].pairing == []
+    await coordinator.async_shutdown()
+
+
+async def test_a_rejected_token_asks_for_pairing_again(hass: HomeAssistant):
+    """The agent no longer takes the stored token (its pairing was cleared on
+    the TV): the repair comes up, and running it pairs again."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "stale"})
+    fakes: list[FakeAgent] = []
+
+    def configure(fake):
+        fake.by_code()
+        fake.reject_token = "stale"
+        fake.pair_tokens.append("fresh")
+
+    with patch(f"{COORD}.asyncio.sleep", new=AsyncMock()):
+        coordinator = await _start(hass, entry, fakes, configure=configure)
+        flow, _registry, _issue_id = await _pairing_flow(hass, entry, coordinator)
+    fake = fakes[0]
+    assert fake.launches == 0
+    await flow.async_step_init()
+    await flow.async_step_start({})
+    fake.accepted = True
+    await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "fresh")
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    await coordinator.async_shutdown()
+
+
+async def test_pairs_with_an_agent_from_before_requests(hass: HomeAssistant):
+    """Agents before 0.10 know no requests: the launch opens a window and the
+    token goes to whoever asks while it is open. They are still paired with
+    as before, without the user."""
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _entry(hass)
+    fakes: list[FakeAgent] = []
+    coordinator = await _start(
+        hass, entry, fakes, configure=lambda f: f.pair_tokens.append("old-style")
+    )
+    await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "old-style")
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    fake = fakes[0]
+    assert fake.pairing[:3] == ["request", "launch", "request"]
+    assert fake.launches == 1
+    issue_id = f"agent_pairing_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
     await coordinator.async_shutdown()
 
 
@@ -362,28 +645,192 @@ async def test_offline_tv_marks_agent_offline(hass: HomeAssistant):
     await coordinator.async_shutdown()
 
 
-async def test_new_certificate_triggers_repair(hass: HomeAssistant):
-    """A pinned fingerprint that no longer matches (reinstalled agent) clears
-    the pin and the token and pairs again, learning the new certificate."""
-    entry = _entry(
+def _pinned_to_old(hass: HomeAssistant, **extra):
+    """An entry paired with an agent whose certificate was "cert-OLD"."""
+    return _entry(
         hass,
         **{
             CONF_AGENT_TOKEN: "old",
-            CONF_AGENT_CERT: agentmod.encode_cert(b"cert-OLD"),
             CONF_AGENT_FINGERPRINT: agentmod.fingerprint_of(b"cert-OLD"),
+            **extra,
         },
     )
+
+
+async def test_new_certificate_is_not_paired_with_automatically(hass: HomeAssistant):
+    """A pinned fingerprint that no longer matches (the agent was reinstalled,
+    or something else answers on its port) raises a repair. Nothing is sent to
+    the new peer, and the stored pairing is left alone, until the user says
+    so."""
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _pinned_to_old(hass)
     fakes: list[FakeAgent] = []
     with patch(f"{COORD}.asyncio.sleep", new=AsyncMock()):
         coordinator = await _start(
             hass, entry, fakes, configure=lambda f: f.pair_tokens.append("renewed")
         )
+        issue_id = f"agent_identity_changed_{entry.entry_id}"
+        await _until(
+            lambda: ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+        )
+        for _ in range(20):  # let the loop go round a few times
+            await _real_sleep(0)
+    fake = fakes[0]
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue.is_fixable
+    assert issue.translation_key == "agent_identity_changed"
+    assert issue.data["entry_id"] == entry.entry_id
+    # The new certificate's fingerprint is shown, so it can be compared.
+    assert fake.presented.startswith(issue.data["fingerprint"].replace(" ", ""))
+    # Untouched: still the old pairing, nothing pinned anew, no request got
+    # through to the stranger, no pairing was attempted.
+    assert entry.data[CONF_AGENT_TOKEN] == "old"
+    assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(b"cert-OLD")
+    assert fake.requests == []
+    assert fake.pair_tokens == ["renewed"]
+    assert fake.psk_calls == []
+    assert coordinator.data.get(AGENT_ONLINE) is not True
+    coordinator.client.exec_command.assert_not_called()  # the agent was not launched
+    await coordinator.async_shutdown()
+
+
+async def test_confirming_the_repair_pairs_with_the_new_certificate(
+    hass: HomeAssistant,
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.bravia_tv_grpc import repairs
+
+    entry = _pinned_to_old(hass)
+    fakes: list[FakeAgent] = []
+    with patch(f"{COORD}.asyncio.sleep", new=AsyncMock()):
+        coordinator = await _start(
+            hass, entry, fakes, configure=lambda f: f.pair_tokens.append("renewed")
+        )
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+        issue_id = f"agent_identity_changed_{entry.entry_id}"
+        registry = ir.async_get(hass)
+        await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is not None)
+        issue = registry.async_get_issue(DOMAIN, issue_id)
+
+        flow = await repairs.async_create_fix_flow(hass, issue_id, issue.data)
+        flow.hass = hass
+        form = await flow.async_step_init()
+        assert form["type"] == "form" and form["step_id"] == "confirm"
+        assert (
+            form["description_placeholders"]["fingerprint"] == issue.data["fingerprint"]
+        )
+        done = await flow.async_step_confirm({})
+        assert done["type"] == "create_entry"
+
         await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "renewed")
-    assert entry.data[CONF_AGENT_FINGERPRINT] == agentmod.fingerprint_of(
-        FakeAgent.PRESENTED
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    fake = fakes[0]
+    assert entry.data[CONF_AGENT_FINGERPRINT] == fake.presented
+    assert fake.fingerprint == fake.presented
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    await coordinator.async_shutdown()
+
+
+async def test_a_new_certificate_is_proved_by_the_code(hass: HomeAssistant):
+    """With an agent that pairs by code, confirming the changed certificate
+    leads straight into the pairing: the code is tied to the certificate, so
+    the viewer's answer on the real TV is what proves the new one."""
+    entry = _pinned_to_old(hass)
+    fakes: list[FakeAgent] = []
+    # (No patched sleep: the wait for the viewer's answer polls with it.)
+    coordinator = await _start(hass, entry, fakes, configure=_by_code("renewed"))
+    flow, registry, issue_id = await _pairing_flow(
+        hass, entry, coordinator, prefix="agent_identity_changed_"
     )
-    assert fakes[0].cert == FakeAgent.PRESENTED
-    assert coordinator.data[AGENT_ONLINE] is True
+    fake = fakes[0]
+    form = await flow.async_step_init()
+    assert form["type"] == "form" and form["step_id"] == "confirm"
+    assert fake.pairing == []  # nothing before the user confirms
+    form = await flow.async_step_confirm({})
+    assert form["type"] == "form" and form["step_id"] == "compare"
+    code = agentmod.pairing_code(b"s" * 32, b"n" * 32, fake.presented)
+    assert form["description_placeholders"]["code"] == f"{code[:3]} {code[3:]}"
+    assert entry.data.get(CONF_AGENT_TOKEN) is None  # the old pairing is gone
+    fake.accepted = True
+    await _until(lambda: entry.data.get(CONF_AGENT_TOKEN) == "renewed")
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    assert entry.data[CONF_AGENT_FINGERPRINT] == fake.presented
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    assert registry.async_get_issue(DOMAIN, f"agent_pairing_{entry.entry_id}") is None
+    await coordinator.async_shutdown()
+
+
+async def test_known_agent_returning_clears_the_repair(hass: HomeAssistant):
+    """The stranger goes away and the agent we are paired with answers again:
+    the link resumes with the stored pairing and the repair clears itself."""
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _pinned_to_old(hass)
+    fakes: list[FakeAgent] = []
+    with patch(f"{COORD}._AGENT_IDENTITY_RECHECK", 0.01):
+        coordinator = await _start(hass, entry, fakes)
+        issue_id = f"agent_identity_changed_{entry.entry_id}"
+        registry = ir.async_get(hass)
+        await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is not None)
+        fakes[0].PRESENTED = b"cert-OLD"  # the real agent is back
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+    assert entry.data[CONF_AGENT_TOKEN] == "old"
+    await coordinator.async_shutdown()
+
+
+async def test_stranger_gets_no_key_and_no_dashboard_token(hass: HomeAssistant):
+    """What an impostor on the agent's port used to be handed, it no longer
+    is: neither the TV's IP-control key nor a Home Assistant access token,
+    whatever its state document claims."""
+
+    class Impostor(FakeAgent):
+        PRESENTED = b"cert-IMPOSTOR"
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.ha_tokens: list[str] = []
+            self.pair_tokens.append("impostor-token")
+            self.state_doc = {
+                **_DOC,
+                "rest": {"auth": "none", "available": True},
+                "dashboard": {"showing": True, "mode": "full", "token_needed": True},
+            }
+
+        async def async_dashboard_token(self, token, expires_in):
+            self.ha_tokens.append(token)
+
+    await hass.auth.async_create_user("owner")
+    entry = _pinned_to_old(hass)
+    hass.config_entries.async_update_entry(entry, options={"rest_psk": "tv-key"})
+    fakes: list[Impostor] = []
+
+    def factory(session, host, port=8585, token=None, fingerprint=None):
+        fake = Impostor(session, host, port, token, fingerprint)
+        fakes.append(fake)
+        return fake
+
+    with (
+        patch(f"{COORD}.agentmod.AgentClient", side_effect=factory),
+        patch(f"{COORD}.BraviaTvCoordinator._async_load_cloud", new=AsyncMock()),
+        patch(f"{COORD}.asyncio.sleep", new=AsyncMock()),
+    ):
+        coordinator = BraviaTvCoordinator(hass, entry, _client())
+        coordinator._state["power"] = True
+        await coordinator.async_start()
+        for _ in range(50):
+            await _real_sleep(0)
+    impostor = fakes[0]
+    assert impostor.psk_calls == []
+    assert impostor.ha_tokens == []
+    assert impostor.pair_tokens == ["impostor-token"]  # never consumed
+    assert entry.data[CONF_AGENT_TOKEN] == "old"
+    # No display user was conjured up for it either.
+    assert not [
+        u for u in await hass.auth.async_get_users() if "HA TV Agent" in (u.name or "")
+    ]
     await coordinator.async_shutdown()
 
 
@@ -525,6 +972,95 @@ async def test_agent_setup_launches_when_a_grant_is_missing(hass: HomeAssistant)
         await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
         await coordinator.async_agent_setup()
     assert sent and sent[0]["args"]["uri"] == agentmod.SETUP_DEEP_LINK
+    await coordinator.async_shutdown()
+
+
+async def test_agent_setup_without_the_cloud_link_announces_itself_first(
+    hass: HomeAssistant,
+):
+    """Without the cloud deep link the app is launched bare. An agent from
+    0.10 on opens its permission screens for such a launch only when it was
+    told just before that this is what the launch is for."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+
+    def configure(f):
+        f.info = {
+            **_INFO,
+            "permissions": {"notification_access": False},
+            "pairing": {"paired": True, "method": "compare"},
+        }
+
+    coordinator = await _start(hass, entry, fakes, configure=configure)
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    fake = fakes[0]
+    await coordinator.async_agent_setup()
+    assert fake.pairing[-2:] == ["setup", "launch"]
+    assert fake.setup_armed == 1 and fake.launches == 1
+
+    # It could not be told (the link dropped): then it is not launched at
+    # all, rather than launched with a meaning it would get wrong.
+    async def unreachable():
+        raise agentmod.AgentError("gone")
+
+    fake.async_arm_setup = unreachable
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_agent_setup()
+    assert fake.launches == 1
+    coordinator._set_agent_online(False)
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_agent_setup()
+    assert fake.launches == 1
+    await coordinator.async_shutdown()
+
+
+async def test_agent_setup_launches_an_older_agent_as_before(hass: HomeAssistant):
+    """An agent from before 0.10 has no setup call and is simply launched."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+
+    def configure(f):
+        f.legacy = True
+        f.info = {**_INFO, "permissions": {"notification_access": False}}
+
+    coordinator = await _start(hass, entry, fakes, configure=configure)
+    await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+    await coordinator.async_agent_setup()
+    assert fakes[0].setup_armed == 0 and fakes[0].launches == 1
+    await coordinator.async_shutdown()
+
+
+async def test_agent_update_needs_the_manifests_checksum(hass: HomeAssistant):
+    """An update is staged only with the SHA-256 the download must have. A
+    manifest without one (a release whose checksum step failed) is refused
+    here, and nothing is opened on the TV."""
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+    manifest = {"version": "9.9.9", "url": "https://x/bravia-agent.apk", "sha256": ""}
+    sent: list[dict] = []
+
+    async def fake_cloud(name, commands):
+        sent.append(commands[0])
+        return {}
+
+    with (
+        patch(
+            f"{COORD}.agentmod.async_fetch_manifest",
+            new=AsyncMock(return_value=manifest),
+        ),
+        patch(
+            f"{COORD}.BraviaTvCoordinator.async_cloud_command", side_effect=fake_cloud
+        ),
+    ):
+        coordinator = await _start(
+            hass, entry, fakes, cloud_caps={"application.deep_link": ("post",)}
+        )
+        await _until(lambda: coordinator.data.get(AGENT_ONLINE) is True)
+        with pytest.raises(HomeAssistantError, match="Could not stage"):
+            await coordinator.async_agent_install_update()
+    assert not hasattr(fakes[0], "staged")
+    assert not sent
+    coordinator.client.exec_command.assert_not_called()
     await coordinator.async_shutdown()
 
 

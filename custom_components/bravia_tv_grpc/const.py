@@ -28,14 +28,20 @@ CONF_AGENT_TOKEN = "agent_token"
 # <config>/bravia_picture_profiles/. Set once (from the TV's friendly name) when
 # the TV is linked, then frozen so the folder survives IP/name changes.
 CONF_PROFILE_SLUG = "profile_slug"
-# SHA-256 of the agent's self-signed TLS certificate (DER), learned from the
-# handshake during pairing and pinned on every later connection.
+# SHA-256 of the agent's self-signed TLS certificate (DER), read from the
+# handshake before pairing and pinned on every later connection: a peer that
+# presents any other certificate is refused.
 CONF_AGENT_FINGERPRINT = "agent_fingerprint"
-# The agent's self-signed certificate (DER, base64): the TLS trust anchor the
-# client verifies against, so a different certificate fails the handshake.
+# The certificate itself (DER, base64), as entries paired before 0.10 stored
+# it. Only read, to derive the fingerprint; dropped at the next pairing.
 CONF_AGENT_CERT = "agent_cert"
 # Name the agent shows for the paired client.
 AGENT_CLIENT_NAME = "Home Assistant"
+
+# hass.data key: ``{entry_id: (host, port)}``, an address mDNS announced for a
+# TV whose setup is failing. The next setup attempt tries it, and keeps it
+# only once that address proved to be the TV.
+DATA_ADDRESS_HINTS = f"{DOMAIN}_address_hints"
 
 # Picture settings over the TV's REST IP control, relayed by the agent.
 # Write access follows the key: empty = read-only sensors, set = controls.

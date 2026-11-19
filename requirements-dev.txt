@@ -13,18 +13,13 @@ aiohttp>=3.9.0
 pytest>=8.0.0
 cryptography>=42.0.0
 pytest-homeassistant-custom-component
+# Coverage for the CI floor (--cov-fail-under in the workflow).
+pytest-cov
 
-# Regenerating grpc/bravia_control_pb2*.py from grpc/bravia_control.proto:
-#   python -m grpc_tools.protoc -Igrpc --python_out=grpc --grpc_python_out=grpc \
-#     grpc/bravia_control.proto
-# then re-apply TWO manual patches to the generated code:
-#   1. pb2_grpc: make the import relative -> `from . import bravia_control_pb2`.
-#   2. pb2: register in a PRIVATE pool, NOT the global Default() one --
-#      `_pool = _descriptor_pool.DescriptorPool()` /
-#      `DESCRIPTOR = _pool.AddSerializedFile(...)`. This keeps our proto's symbol
-#      names from colliding in the shared descriptor pool with a co-installed
-#      bravia_quad integration, which uses the same proto package.
-# Pinned so the emitted runtime-version guard matches HA's protobuf (6.31.x).
-# This sets the generated code's minimum grpcio/protobuf, hence the manifest's
-# floors; do not bump it casually (Dependabot ignores it for that reason).
-grpcio-tools>=1.74,<1.75
+# Type checking (`mypy`, configured in pyproject.toml). Pinned so a new release
+# cannot turn CI red with no code change; Dependabot proposes bumps.
+mypy==2.4.1
+
+# Regenerating grpc/bravia_control_pb2*.py needs grpcio-tools, which lives in
+# requirements-proto.txt: its pin caps protobuf below what current Home
+# Assistant installs, so it must stay out of the environment the tests run in.

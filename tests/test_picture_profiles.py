@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,10 +19,20 @@ from custom_components.bravia_tv_grpc.coordinator import (  # noqa: E402
     agent_path,
 )
 
+COORD = "custom_components.bravia_tv_grpc.coordinator"
+
 
 @pytest.fixture(autouse=True)
 def _enable(enable_custom_integrations):
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_wait_for_the_agents_reread():
+    """A capture waits for the state event of the agent's fresh read; the
+    fakes here send none unless a test makes them."""
+    with patch(f"{COORD}._PICTURE_FRESH_WAIT", 0):
+        yield
 
 
 def test_capture_picks_writable_available_non_mode():
@@ -83,7 +93,7 @@ def _coordinator(hass: HomeAssistant) -> BraviaTvCoordinator:
             "pictureMode": {
                 "value": "professional",
                 "available": True,
-                "candidates": [{"value": "cinema"}],
+                "candidates": [{"value": "professional"}, {"value": "cinema"}],
             },
             "contrast": {"value": "90", "available": True, "candidates": [{"min": 0}]},
             "color": {"value": "50", "available": True, "candidates": [{"min": 0}]},
@@ -98,6 +108,7 @@ def _coordinator(hass: HomeAssistant) -> BraviaTvCoordinator:
     }
     c.agent = MagicMock()
     c.agent.async_set_picture = AsyncMock()
+    c.agent.async_picture_refresh = AsyncMock()
     c.agent.async_picture_batch = AsyncMock(
         return_value={"applied": 2, "failed": 0, "results": []}
     )
@@ -116,6 +127,120 @@ async def test_save_then_restore(hass: HomeAssistant):
     assert res["auto_luminance_on"] is False
     # No ambient learner on the agent -> nothing to reset.
     assert res["ambient_reset"] is False
+
+
+async def test_save_captures_what_the_tv_has_now(hass: HomeAssistant):
+    """What Home Assistant holds is the agent's last read, up to a poll
+    interval old. A save asks for a fresh read first, so a backup taken right
+    after adjusting the picture with the remote stores the new values."""
+    c = _coordinator(hass)
+
+    async def reread():
+        # The agent's re-read finds the change and reports it.
+        targets = c._state[agent_path("picture")]["targets"]
+        fresh = {**targets, "contrast": {**targets["contrast"], "value": "77"}}
+        c._apply_agent_document(
+            {"picture": {"targets": fresh}, "rest": c._state[agent_path("rest")]}
+        )
+
+    c.agent.async_picture_refresh.side_effect = reread
+    with patch(f"{COORD}._PICTURE_FRESH_WAIT", 5):
+        await c.async_save_picture_profile("after tweak")
+    c.agent.async_picture_refresh.assert_awaited_once()
+    assert (await c._picture_profiles.get("after tweak"))["settings"][
+        "contrast"
+    ] == "77"
+
+    # If the agent cannot be asked, the last read is used: still a save.
+    from custom_components.bravia_tv_grpc.grpc import agent as agentmod
+
+    c.agent.async_picture_refresh.side_effect = agentmod.AgentError("down")
+    assert (await c.async_save_picture_profile("anyway"))["count"] == 2
+
+
+async def test_restore_backs_up_what_it_overwrites(hass: HomeAssistant):
+    """A restore overwrites the mode's settings for good, so it first keeps
+    them as "Before last restore"; restoring that one swaps the two (undo)."""
+    c = _coordinator(hass)
+    targets = c._state[agent_path("picture")]["targets"]
+    await c.async_save_picture_profile("cal")  # contrast 90
+    targets["contrast"]["value"] = "55"  # the picture as it is before the restore
+    c.agent.reset_mock()
+
+    res = await c.async_restore_picture_profile("cal")
+    assert res["backup"] == pp.BACKUP_NAME
+    backup = await c._picture_profiles.get(pp.BACKUP_NAME)
+    assert backup["settings"]["contrast"] == "55"
+    assert backup["picture_mode"] == "professional" and backup["hdr_class"] == "sdr"
+    assert pp.BACKUP_NAME in c.picture_profile_names
+    # It was read after the mode switch and before the writes.
+    order = [name for name, *_ in c.agent.method_calls]
+    assert order.index("async_set_picture") < order.index("async_picture_refresh")
+    assert order.index("async_picture_refresh") < order.index("async_picture_batch")
+
+    # Undo: restore the backup. What it overwrites (the restored "cal" values)
+    # becomes the new backup, so the same press redoes.
+    targets["contrast"]["value"] = "90"
+    undo = await c.async_restore_picture_profile(pp.BACKUP_NAME)
+    written = {
+        item["target"]: item["value"]
+        for item in c.agent.async_picture_batch.await_args.args[0]
+    }
+    assert written["contrast"] == "55"
+    assert undo["backup"] == pp.BACKUP_NAME
+    assert (await c._picture_profiles.get(pp.BACKUP_NAME))["settings"][
+        "contrast"
+    ] == "90"
+
+
+async def test_restore_without_readable_settings_still_restores(hass: HomeAssistant):
+    c = _coordinator(hass)
+    await c.async_save_picture_profile("cal")
+    c._state[agent_path("picture")] = {"targets": {}}
+    res = await c.async_restore_picture_profile("cal")
+    assert res["backup"] is None and res["applied"] == 2
+
+
+@pytest.mark.parametrize(
+    ("error", "key"),
+    [
+        (("rest_unauthorized", 403), "rest_key_rejected"),
+        (("rest_unavailable", 503), "rest_unavailable"),
+        (("invalid_value", 400), "picture_write_refused"),
+        (None, "agent_offline"),
+    ],
+)
+async def test_restore_reports_what_actually_failed(hass: HomeAssistant, error, key):
+    """A refusal from the agent used to be reported as "the agent is not
+    connected", whatever it was."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.bravia_tv_grpc.grpc import agent as agentmod
+
+    c = _coordinator(hass)
+    await c.async_save_picture_profile("cal")
+    c.agent.async_picture_batch.side_effect = (
+        agentmod.AgentRequestError(*error) if error else agentmod.AgentError("down")
+    )
+    with pytest.raises(HomeAssistantError) as err:
+        await c.async_restore_picture_profile("cal")
+    assert err.value.translation_key == key
+    if error:
+        assert err.value.translation_placeholders["code"] == error[0]
+
+
+async def test_restore_refuses_a_mode_the_tv_does_not_offer(hass: HomeAssistant):
+    """Before anything is written, not as a failed write afterwards."""
+    c = _coordinator(hass)
+    await c._picture_profiles.put(
+        "dv", {"picture_mode": "dolbyVisionDark", "settings": {"contrast": "90"}}
+    )
+    with pytest.raises(ServiceValidationError) as err:
+        await c.async_restore_picture_profile("dv")
+    assert err.value.translation_key == "picture_mode_unavailable"
+    assert err.value.translation_placeholders["mode"] == "dolbyVisionDark"
+    c.agent.async_set_picture.assert_not_awaited()
+    c.agent.async_picture_batch.assert_not_awaited()
 
 
 async def test_restore_resets_ambient_learner_when_enabled(hass: HomeAssistant):
@@ -185,10 +310,11 @@ async def test_select_and_restore_button(hass: HomeAssistant):
     from custom_components.bravia_tv_grpc.select import BraviaTvPictureProfileSelect
 
     c = _coordinator(hass)
-    await c.async_save_picture_profile("a")
     sel = BraviaTvPictureProfileSelect(c)
+    assert sel.options == [] and sel.current_option is None
+    await c.async_save_picture_profile("a")
     assert sel.options == ["a"]
-    assert sel.current_option == "a"
+    assert sel.current_option == "a"  # saving a profile chooses it
     await c.async_save_picture_profile("b")
     assert set(sel.options) == {"a", "b"}
     await sel.async_select_option("b")
@@ -201,10 +327,62 @@ async def test_restore_button_none_selected(hass: HomeAssistant):
     from homeassistant.exceptions import ServiceValidationError
 
     c = _coordinator(hass)
-    c._selected_profile = None
+    await c._picture_profiles.put("a", {"settings": {"contrast": "90"}})
+    await c._refresh_profile_names()
+    # Profiles exist, but none was chosen: Restore must not pick one itself.
+    assert c.picture_profile_names == ["a"]
+    assert c.selected_picture_profile is None
     with pytest.raises(ServiceValidationError) as err:
         await c.async_restore_selected_picture_profile()
     assert err.value.translation_key == "picture_profile_none_selected"
+    c.agent.async_picture_batch.assert_not_awaited()
+
+
+async def test_choice_survives_a_reload_but_is_never_a_guess(hass: HomeAssistant):
+    """After a restart nothing is chosen (it used to be the first profile,
+    which the Restore button would then write). The user's own choice is kept
+    across a reload of the entry."""
+    from fake_tv import CREDS, FakeTv
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.bravia_tv_grpc.grpc import credentials as cred
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="dev",
+        title="Living room",
+        data={"host": "tv", "grpc_keys": cred.credentials_to_json(CREDS)},
+    )
+    entry.add_to_hass(hass)
+
+    async def start() -> BraviaTvCoordinator:
+        coordinator = BraviaTvCoordinator(
+            hass, entry, FakeTv("tv", 1, "dev", CREDS["hmac_key"])
+        )
+        with patch(f"{COORD}.BraviaTvCoordinator._async_load_cloud", new=AsyncMock()):
+            await coordinator.async_start()
+        return coordinator
+
+    first = await start()
+    for name in ("a", "b"):
+        await first._picture_profiles.put(name, {"settings": {"contrast": "90"}})
+    await first._refresh_profile_names()
+    assert first.picture_profile_names == ["a", "b"]
+    assert first.selected_picture_profile is None
+    await first.async_select_picture_profile("b")
+    await first.async_shutdown()
+
+    second = await start()  # the entry was reloaded
+    assert second.selected_picture_profile == "b"
+    # A chosen profile whose file is gone is not replaced by another.
+    await second._picture_profiles.delete("b")
+    await second._refresh_profile_names()
+    assert second.selected_picture_profile is None
+    await second.async_shutdown()
+
+    third = await start()
+    assert third.selected_picture_profile is None
+    await third.async_shutdown()
 
 
 async def test_name_text_and_save_button(hass: HomeAssistant):
@@ -239,6 +417,12 @@ async def test_delete_selected_button(hass: HomeAssistant):
     await BraviaTvDeleteProfileButton(c).async_press()
     assert "b" not in c.picture_profile_names
     assert "a" in c.picture_profile_names
+    # Nothing takes the deleted profile's place: a second press must not
+    # delete "a" as well.
+    assert c.selected_picture_profile is None
+    with pytest.raises(ServiceValidationError):
+        await BraviaTvDeleteProfileButton(c).async_press()
+    assert "a" in c.picture_profile_names
 
 
 async def test_delete_selected_none_raises(hass: HomeAssistant):
@@ -268,9 +452,11 @@ async def test_restore_refuses_on_range_mismatch(hass: HomeAssistant):
         "saved": "sdr",
         "current": "hdr10",
     }
+    c.agent.async_picture_batch.assert_not_awaited()
     # force overrides
     res = await c.async_restore_picture_profile("sdr-cal", force=True)
-    assert res["applied"] >= 0
+    assert res["applied"] == 2
+    c.agent.async_picture_batch.assert_awaited_once()
 
 
 async def test_restore_matching_range_proceeds(hass: HomeAssistant):
@@ -319,6 +505,28 @@ async def test_select_details_none_when_empty(hass: HomeAssistant):
 
     c = _coordinator(hass)
     assert BraviaTvPictureProfileSelect(c).extra_state_attributes is None
+
+
+async def test_select_details_follow_what_the_select_shows(hass: HomeAssistant):
+    """A chosen SDR profile is hidden while HDR plays: the select then shows
+    nothing chosen, and its attributes must not describe the hidden one."""
+    from custom_components.bravia_tv_grpc.coordinator import _SIGNAL_VIDEO
+    from custom_components.bravia_tv_grpc.select import (
+        BraviaTvPictureProfileSelect,
+        _range_label,
+    )
+
+    c = _coordinator(hass)
+    await c.async_save_picture_profile("sdr cal")
+    sel = BraviaTvPictureProfileSelect(c)
+    assert sel.extra_state_attributes["dynamic_range"] == "SDR"
+    c._state[_SIGNAL_VIDEO] = '[{"hdr_type": "dolby"}]'
+    assert sel.current_option is None
+    assert sel.extra_state_attributes is None
+    # The TV reports Dolby Vision as the bare "dolby".
+    await c.async_save_picture_profile("dv cal")
+    assert sel.extra_state_attributes["dynamic_range"] == "Dolby Vision"
+    assert _range_label("hdr10plus") == "HDR10+"
 
 
 async def test_ambient_optimization_excluded_from_profile(hass: HomeAssistant):
@@ -400,8 +608,14 @@ async def test_store_skips_bad_and_hostile_files(hass: HomeAssistant, tmp_path):
     (d / "badyaml.yaml").write_text("not: [a, b\n")  # broken YAML
     (d / "nosettings.yaml").write_text("picture_mode: cinema\n")  # no settings
     (d / "alias.yaml").write_text("settings: &a\n  x: '1'\ndup: *a\n")  # alias vector
-    big = "x" * (MAX_FILE_BYTES + 1)
-    (d / "huge.yaml").write_text(f"settings:\n  a: '{big}'\n")
+    # Valid in every other respect, so only the size cap can reject it.
+    (d / "huge.yaml").write_text(
+        "settings:\n  contrast: '90'\n" + "#" * (MAX_FILE_BYTES + 1) + "\n"
+    )
+    (d / "manykeys.yaml").write_text(
+        "settings:\n" + "".join(f"  k{i}: '1'\n" for i in range(201))
+    )
+    (d / "longvalue.yaml").write_text(f"settings:\n  a: '{'x' * 513}'\n")
     names = await store.names()
     assert names == ["ok"]  # only the valid file survives
 
@@ -410,8 +624,11 @@ def test_profile_name_validation():
     from custom_components.bravia_tv_grpc.picture_profiles import is_valid_profile_name
 
     assert is_valid_profile_name("Calibrated (Pro, SDR)")
+    assert is_valid_profile_name("Kalibriert für Wohnzimmer 🎬")
     for bad in ("", "a/b", "a\\b", ".", "..", "x" * 129, "bad\nname", 5, None):
         assert not is_valid_profile_name(bad)
+    # Within the character limit, but too many bytes for a file name.
+    assert not is_valid_profile_name("🎬" * 100)
 
 
 async def test_profile_slug_persist_and_collision(hass: HomeAssistant):
@@ -502,9 +719,13 @@ async def test_restore_falls_back_to_per_setting_on_old_agent(hass: HomeAssistan
     )
     c.agent.async_set_picture = AsyncMock()
     res = await c.async_restore_picture_profile("cal")
-    # per-setting writes used instead of the batch
-    assert c.agent.async_set_picture.await_count >= 2  # contrast + color at least
-    assert res["applied"] >= 2 and res["failed"] == 0
+    # per-setting writes used instead of the batch: the mode, contrast, color
+    assert [call.args[0] for call in c.agent.async_set_picture.await_args_list] == [
+        "pictureMode",
+        "color",
+        "contrast",
+    ]
+    assert res["applied"] == 2 and res["failed"] == 0
 
 
 # ---- restore target ("Restore to picture mode") and the range filter --------
@@ -542,6 +763,10 @@ async def test_restore_target_falls_back_to_saved_profile(hass: HomeAssistant):
     _offer_modes(c, "standard", "cinema", current="standard")
     await c.async_select_picture_profile("pro1")
     assert c.restore_target is None  # "From saved profile"
+    # ...which the TV cannot take right now: refused up front.
+    with pytest.raises(ServiceValidationError) as err:
+        await c.async_restore_selected_picture_profile()
+    assert err.value.translation_key == "picture_mode_unavailable"
     # A target that stops being offered also reads as "From saved profile".
     _offer_modes(c, "customForPro1", "customForPro2")
     await c.async_set_restore_target("customForPro2")

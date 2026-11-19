@@ -1,0 +1,19 @@
+# Only for regenerating grpc/bravia_control_pb2*.py from
+# grpc/bravia_control.proto, in an environment of its own:
+#   python -m grpc_tools.protoc -Igrpc --python_out=grpc --grpc_python_out=grpc \
+#     grpc/bravia_control.proto
+# then re-apply TWO manual patches to the generated code:
+#   1. pb2_grpc: make the import relative -> `from . import bravia_control_pb2`.
+#   2. pb2: register in a PRIVATE pool, NOT the global Default() one --
+#      `_pool = _descriptor_pool.DescriptorPool()` /
+#      `DESCRIPTOR = _pool.AddSerializedFile(...)`. This keeps our proto's symbol
+#      names from colliding in the shared descriptor pool with a co-installed
+#      bravia_quad integration, which uses the same proto package.
+# Pinned so the emitted runtime-version guard stays at the manifest's floors
+# (grpcio>=1.74.0, protobuf>=6.31.1), which the oldest supported Home Assistant
+# must be able to satisfy. Do not bump it casually (Dependabot ignores it for
+# that reason). Kept apart from requirements-dev.txt because this pin caps
+# protobuf below 7, while current Home Assistant installs protobuf 7: with it
+# in the test environment, the tests would run on a protobuf no real install
+# has.
+grpcio-tools>=1.74,<1.75

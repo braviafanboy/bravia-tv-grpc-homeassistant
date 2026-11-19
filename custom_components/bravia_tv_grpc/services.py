@@ -9,6 +9,8 @@ an action's target.) One TV per call. Registered once in ``async_setup``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -62,7 +64,7 @@ _COMPARE = vol.Schema(
 _CURVES = vol.Schema({**_TV, vol.Required("curves"): dict})
 
 
-def _device_entry_ids(device: dr.DeviceEntry) -> set[str]:
+def _device_entry_ids(device: Any) -> set[str]:
     """The config entry IDs a device belongs to.
 
     HA 2026.8 gave a device a single ``config_entry_id`` and deprecated the

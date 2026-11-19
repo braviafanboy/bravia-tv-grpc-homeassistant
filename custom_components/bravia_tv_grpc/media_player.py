@@ -12,8 +12,6 @@ are offered only when the TV advertises those cloud capabilities.
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.media_player import (
     BrowseMedia,
     MediaClass,
@@ -24,7 +22,7 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -36,8 +34,6 @@ from .entity import BraviaTvEntity
 from .grpc import cloud_commands as cloud
 from .grpc.resources import image_content_type
 from .util import deep_link_package, parse_json_value, source_label
-
-_LOGGER = logging.getLogger(__name__)
 
 _POWER = "power"
 _VOLUME = "volume"
@@ -113,6 +109,8 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
     """TV media player built from advertised gRPC capabilities."""
 
     _attr_name = None  # use the device name for the primary entity
+    # An unreachable TV is "off", and can be turned on through the cloud.
+    _available_offline = True
 
     def __init__(self, coordinator: BraviaTvCoordinator) -> None:
         super().__init__(coordinator, _POWER)
@@ -357,8 +355,10 @@ class BraviaTvMediaPlayer(BraviaTvEntity, MediaPlayerEntity):
             if app.get("label") == source:
                 await self.coordinator.async_set_field(_APP, app["id"])
                 return
-        _LOGGER.warning(
-            "Unknown source (not an available input or known app): %s", source
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_source",
+            translation_placeholders={"source": source},
         )
 
     # -- app browser -------------------------------------------------------

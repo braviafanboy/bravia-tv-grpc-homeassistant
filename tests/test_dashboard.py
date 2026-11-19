@@ -110,16 +110,59 @@ async def test_display_user_recreated_if_deleted(hass: HomeAssistant):
     assert again.id != user.id
 
 
+async def test_overlay_user_can_only_look(hass: HomeAssistant):
+    """An overlay is only ever looked at, so its token belongs to a user in
+    Home Assistant's read-only group: it can read states, not call actions."""
+    token, _ = await dashboards.async_access_token(hass, interactive=False)
+    viewer = hass.auth.async_validate_access_token(token).user
+    assert viewer.name == dashboards.VIEW_USER_NAME
+    assert viewer.local_only and not viewer.is_admin
+    assert viewer.permissions.check_entity("lock.front_door", "read")
+    assert not viewer.permissions.check_entity("lock.front_door", "control")
+
+    # The full-screen dashboard is operated with the remote: an ordinary user.
+    token, _ = await dashboards.async_access_token(hass, interactive=True)
+    operator = hass.auth.async_validate_access_token(token).user
+    assert operator.id != viewer.id
+    assert operator.name == dashboards.DISPLAY_USER_NAME
+    assert operator.permissions.check_entity("lock.front_door", "control")
+    assert not operator.is_admin
+
+
 async def test_remove_display_user(hass: HomeAssistant):
     await dashboards.async_access_token(hass)
+    await dashboards.async_access_token(hass, interactive=False)
+    await dashboards.async_open_session(hass, "entry", "full", None)
     await dashboards.async_remove_display_user(hass)
     assert not [
         u
         for u in await hass.auth.async_get_users()
-        if u.name == dashboards.DISPLAY_USER_NAME
+        if u.name in (dashboards.DISPLAY_USER_NAME, dashboards.VIEW_USER_NAME)
     ]
+    assert await dashboards.async_get_session(hass, "entry") is None
     # Idempotent.
     await dashboards.async_remove_display_user(hass)
+
+
+async def test_sessions(hass: HomeAssistant):
+    """A session marks a dashboard Home Assistant opened on a TV; it survives
+    for as long as the dashboard is meant to show."""
+    assert await dashboards.async_get_session(hass, "tv1") is None
+    # Full screen without a duration: until closed.
+    session = await dashboards.async_open_session(hass, "tv1", "full", None)
+    assert session["mode"] == "full" and session["expires"] is None
+    assert await dashboards.async_get_session(hass, "tv1") == session
+    assert await dashboards.async_get_session(hass, "tv2") is None
+    # An overlay always ends: its duration, or the agent's 30 s default.
+    timed = await dashboards.async_open_session(hass, "tv2", "overlay", 20)
+    assert 20 < timed["expires"] - timed["opened"] < 200
+    default = await dashboards.async_open_session(hass, "tv3", "overlay", None)
+    assert 30 < default["expires"] - default["opened"] < 200
+    assert not dashboards.session_alive(timed, timed["expires"] + 1)
+    assert dashboards.session_alive(timed, timed["opened"] + 1)
+    await dashboards.async_close_session(hass, "tv1")
+    assert await dashboards.async_get_session(hass, "tv1") is None
+    await dashboards.async_close_session(hass, "tv1")  # idempotent
 
 
 async def test_show_full(hass: HomeAssistant, _internal_url):
@@ -128,8 +171,12 @@ async def test_show_full(hass: HomeAssistant, _internal_url):
     args, kwargs = c.agent.async_dashboard_open.call_args
     url, token, expires_in = args
     assert url == "http://192.168.1.5:8123/lovelace/0"
-    assert hass.auth.async_validate_access_token(token) is not None
+    user = hass.auth.async_validate_access_token(token).user
+    assert user.name == dashboards.DISPLAY_USER_NAME
     assert expires_in == 1800
+    # Showing it opened the session that later token requests are tied to.
+    session = await dashboards.async_get_session(hass, c.config_entry.entry_id)
+    assert session["mode"] == "full"
     # Position and size only apply to overlays.
     assert kwargs == {
         "mode": "full",
@@ -159,6 +206,10 @@ async def test_show_overlay(hass: HomeAssistant, _internal_url):
         "duration_s": 20,
         "kiosk": False,
     }
+    # An overlay gets the view-only user's token.
+    user = hass.auth.async_validate_access_token(args[1]).user
+    assert user.name == dashboards.VIEW_USER_NAME
+    assert not user.permissions.check_entity("light.kitchen", "control")
 
 
 async def test_show_refuses_urls(hass: HomeAssistant, _internal_url):
@@ -186,6 +237,8 @@ async def test_show_errors(hass: HomeAssistant, _internal_url, result, key):
     assert err.value.translation_key == key
     if key == "dashboard_needs_agent_update":
         assert err.value.translation_placeholders["required"] == AGENT_VERSION
+    # Nothing is showing, so nothing may ask for tokens.
+    assert await dashboards.async_get_session(hass, c.config_entry.entry_id) is None
 
 
 async def test_show_needs_agent_online(hass: HomeAssistant, _internal_url):
@@ -196,10 +249,14 @@ async def test_show_needs_agent_online(hass: HomeAssistant, _internal_url):
     assert err.value.translation_key == "agent_offline"
 
 
-async def test_close(hass: HomeAssistant):
-    c = _coordinator(hass)
+async def test_close(hass: HomeAssistant, _internal_url):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0")
     await c.async_close_dashboard()
     c.agent.async_dashboard_close.assert_awaited_once()
+    # Closed: its session is over.
+    assert await dashboards.async_get_session(hass, c.config_entry.entry_id) is None
+    assert c._dashboard_session is None
     c.agent.async_dashboard_close.side_effect = agentmod.AgentRequestError(
         "not_found", 404
     )
@@ -208,18 +265,21 @@ async def test_close(hass: HomeAssistant):
     assert err.value.translation_key == "dashboard_needs_agent_update"
 
 
-async def test_token_needed_answered_once(hass: HomeAssistant):
-    c = _coordinator(hass)
-    doc = {
-        "dashboard": {
-            "showing": True,
-            "mode": "full",
-            "loaded": True,
-            "token_needed": True,
-        }
+_NEEDS_TOKEN = {
+    "dashboard": {
+        "showing": True,
+        "mode": "full",
+        "loaded": True,
+        "token_needed": True,
     }
-    c._apply_agent_document(doc)
-    c._apply_agent_document(doc)  # a second event while the first send runs
+}
+
+
+async def test_token_needed_answered_once(hass: HomeAssistant, _internal_url):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0")
+    c._apply_agent_document(_NEEDS_TOKEN)
+    c._apply_agent_document(_NEEDS_TOKEN)  # a second event while the first send runs
     await hass.async_block_till_done()
     c.agent.async_dashboard_token.assert_awaited_once()
     token, expires_in = c.agent.async_dashboard_token.call_args.args
@@ -233,8 +293,76 @@ async def test_token_needed_answered_once(hass: HomeAssistant):
     c.agent.async_dashboard_token.assert_not_awaited()
 
 
-async def test_token_send_failure_is_quiet(hass: HomeAssistant):
+async def test_token_refresh_matches_the_dashboard_kind(
+    hass: HomeAssistant, _internal_url
+):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0", mode="overlay", duration=600)
+    c._apply_agent_document(
+        {"dashboard": {"showing": True, "mode": "overlay", "token_needed": True}}
+    )
+    await hass.async_block_till_done()
+    token = c.agent.async_dashboard_token.call_args.args[0]
+    assert (
+        hass.auth.async_validate_access_token(token).user.name
+        == dashboards.VIEW_USER_NAME
+    )
+
+
+async def test_no_token_without_a_dashboard_opened_from_home_assistant(
+    hass: HomeAssistant, caplog
+):
+    """The far end of the agent link saying "my page wants a token" is not
+    enough: a token is only sent for a dashboard this integration opened.
+    No display user is created for such a request either."""
     c = _coordinator(hass)
+    c._apply_agent_document(_NEEDS_TOKEN)
+    c._apply_agent_document(_NEEDS_TOKEN)
+    await hass.async_block_till_done()
+    c.agent.async_dashboard_token.assert_not_awaited()
+    assert not [
+        u for u in await hass.auth.async_get_users() if "HA TV Agent" in (u.name or "")
+    ]
+    # Said once, not on every state event.
+    assert caplog.text.count("asked for a dashboard token") == 1
+
+
+async def test_session_ends_when_the_tv_reports_the_dashboard_gone(
+    hass: HomeAssistant, _internal_url
+):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0")
+    entry_id = c.config_entry.entry_id
+    # A "not showing" right after opening may predate the open: ignored.
+    c._apply_agent_document({"dashboard": {"showing": False, "token_needed": False}})
+    await hass.async_block_till_done()
+    assert await dashboards.async_get_session(hass, entry_id) is not None
+    # Once settled, it ends the session (Back on the remote, panel off, …).
+    c._dashboard_session["opened"] -= dashboards.SESSION_SETTLE_S + 1
+    c._apply_agent_document({"dashboard": {"showing": False, "token_needed": False}})
+    await hass.async_block_till_done()
+    assert c._dashboard_session is None
+    assert await dashboards.async_get_session(hass, entry_id) is None
+    # …after which a token request is refused again.
+    c._apply_agent_document(_NEEDS_TOKEN)
+    await hass.async_block_till_done()
+    c.agent.async_dashboard_token.assert_not_awaited()
+
+
+async def test_expired_session_gets_no_token(hass: HomeAssistant, _internal_url):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0", mode="overlay", duration=10)
+    c._dashboard_session["expires"] = c._dashboard_session["opened"] - 1
+    c._apply_agent_document(
+        {"dashboard": {"showing": True, "mode": "overlay", "token_needed": True}}
+    )
+    await hass.async_block_till_done()
+    c.agent.async_dashboard_token.assert_not_awaited()
+
+
+async def test_token_send_failure_is_quiet(hass: HomeAssistant, _internal_url):
+    c = _coordinator(hass, {"state": "shown"})
+    await c.async_show_dashboard("lovelace/0")
     c.agent.async_dashboard_token.side_effect = agentmod.AgentError("down")
     c._apply_agent_document({"dashboard": {"showing": True, "token_needed": True}})
     await hass.async_block_till_done()

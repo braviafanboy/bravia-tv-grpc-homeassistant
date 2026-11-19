@@ -23,6 +23,7 @@
     },
     "abort": {
       "already_configured": "This TV is already configured.",
+      "already_in_progress": "Setup of this TV is already in progress.",
       "reauth_successful": "Successfully re-authenticated with Sony.",
       "wrong_account": "Those credentials are for a different TV. Sign in with the Sony account paired to this TV.",
       "not_a_tv": "That device is a Sony soundbar, not a TV. This integration controls BRAVIA TVs; use the Bravia Theatre (bravia_quad) integration for the soundbar."
@@ -53,11 +54,20 @@
           "notify_duration": "How long notify.send_message banners stay on screen, in seconds."
         }
       }
+    },
+    "error": {
+      "invalid_url": "Enter a complete address starting with http:// or https://, or leave the field empty."
     }
   },
   "exceptions": {
     "exec_rejected": {
       "message": "The TV rejected the change to {path}. It may not be available in the current context (for example the setting's input, app, or audio output isn't active)."
+    },
+    "tv_unreachable": {
+      "message": "{name} cannot be reached right now. It may be off, in standby or disconnected from the network."
+    },
+    "unknown_source": {
+      "message": "{source} is not an input or app the TV offers right now."
     },
     "cloud_rejected": {
       "message": "The TV rejected the cloud command for {name}: {reason}."
@@ -411,7 +421,7 @@
           "off": "Off",
           "active": "Active",
           "paused": "Paused",
-          "unavailable": "Unavailable"
+          "not_available": "Not available"
         },
         "state_attributes": {
           "reason": {
@@ -520,6 +530,60 @@
     "agent_outdated": {
       "title": "HA TV Agent on {name} needs an update",
       "description": "{name} runs HA TV Agent {installed}, but this version of the integration needs {required} or later. Until it is updated, changing most picture settings fails (only picture mode, brightness, colour, contrast, hue, sharpness, local dimming, colour temperature, colour space and HDR mode can be changed). Update the agent from its update entity on the TV's device page and confirm on the TV, or install the release with adb."
+    },
+    "agent_identity_changed": {
+      "title": "HA TV Agent on {name} has a different certificate",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Pair again with the HA TV Agent on {name}?",
+            "description": "The HA TV Agent on {name} now presents a different certificate than the one Home Assistant paired with (the new one's fingerprint starts with {fingerprint}).\n\nThat is what happens when the agent app was reinstalled or its data was cleared. It is also what it looks like when something else on your network answers in the TV's place, so Home Assistant has not paired with it and sends it nothing: no pairing token, no IP control key, no dashboard sign-in.\n\nIf you reinstalled the agent, be at the TV with its remote and submit to pair again: Home Assistant then shows a code, and the TV asks you to allow the pairing and shows its own. They are the same only for the real agent. If you did not reinstall it, leave this repair alone and check what else answers at the TV's address; it clears by itself as soon as the agent Home Assistant knows is back."
+          },
+          "compare": {
+            "title": "Compare the code on {name}",
+            "description": "{name} is now asking whether to allow pairing, and shows a code.\n\nThe code must be: **{code}**\n\nIf the TV shows this same code, choose Allow there with the remote, then submit here. If it shows another code, or names a device you do not know, choose Deny on the TV: something else on your network is asking to pair.\n\nIf the TV shows nothing, open the HA TV Agent app on it. The request waits for half a minute, and for two minutes once it is on screen."
+          }
+        },
+        "error": {
+          "not_allowed_yet": "The request has not been allowed on the TV yet. Choose Allow there, then submit again."
+        },
+        "abort": {
+          "pairing_busy": "The HA TV Agent on {name} is not taking a pairing request right now: another device asked a moment ago, or a request was just denied or left unanswered. Try again in {seconds} seconds. If you see a pairing request on the TV that you did not start, deny it.",
+          "agent_unreachable": "The HA TV Agent on {name} could not be reached. Check that the TV is on, then try again.",
+          "pairing_denied": "The pairing request was denied on {name}. Nothing was paired. You can try again in a minute.",
+          "pairing_lapsed": "The pairing request was not answered on {name} in time. Nothing was paired. You can try again in a minute.",
+          "pairing_failed": "Pairing with the HA TV Agent on {name} did not complete. Check the Home Assistant log, then try again."
+        }
+      }
+    },
+    "agent_pairing": {
+      "title": "HA TV Agent on {name} is not paired",
+      "fix_flow": {
+        "step": {
+          "start": {
+            "title": "Pair with the HA TV Agent on {name}",
+            "description": "Home Assistant found the HA TV Agent on {name}, but is not paired with it, so the agent's sensors and controls are unavailable.\n\nPairing takes a moment at the TV. Be there with its remote, then submit: Home Assistant shows a code and opens the agent on the TV, which asks whether to allow the pairing and shows a code of its own. You allow it there if the two are the same."
+          },
+          "compare": {
+            "title": "Compare the code on {name}",
+            "description": "{name} is now asking whether to allow pairing, and shows a code.\n\nThe code must be: **{code}**\n\nIf the TV shows this same code, choose Allow there with the remote, then submit here. If it shows another code, or names a device you do not know, choose Deny on the TV: something else on your network is asking to pair.\n\nIf the TV shows nothing, open the HA TV Agent app on it. The request waits for half a minute, and for two minutes once it is on screen."
+          }
+        },
+        "error": {
+          "not_allowed_yet": "The request has not been allowed on the TV yet. Choose Allow there, then submit again."
+        },
+        "abort": {
+          "pairing_busy": "The HA TV Agent on {name} is not taking a pairing request right now: another device asked a moment ago, or a request was just denied or left unanswered. Try again in {seconds} seconds. If you see a pairing request on the TV that you did not start, deny it.",
+          "agent_unreachable": "The HA TV Agent on {name} could not be reached. Check that the TV is on, then try again.",
+          "pairing_denied": "The pairing request was denied on {name}. Nothing was paired. You can try again in a minute.",
+          "pairing_lapsed": "The pairing request was not answered on {name} in time. Nothing was paired. You can try again in a minute.",
+          "pairing_failed": "Pairing with the HA TV Agent on {name} did not complete. Check the Home Assistant log, then try again."
+        }
+      }
+    },
+    "agent_contract": {
+      "title": "HA TV Agent on {name} is newer than this integration",
+      "description": "{name} runs an HA TV Agent that speaks version {contract} of its interface; this version of the integration knows version {supported}. Parts of the agent may not work until the integration is updated. Update Bravia TV (gRPC) in HACS."
     }
   },
   "services": {
@@ -575,7 +639,7 @@
     },
     "restore_picture_profile": {
       "name": "Restore picture profile",
-      "description": "Write a saved picture profile back to the TV in a few clicks. Sets the profile's picture mode first, then all its settings.",
+      "description": "Write a saved picture profile back to the TV in a few clicks. Sets the profile's picture mode first, then all its settings. The settings it replaces are kept as the profile Before last restore, so a restore can be taken back by restoring that one.",
       "fields": {
         "device_id": {
           "name": "TV",

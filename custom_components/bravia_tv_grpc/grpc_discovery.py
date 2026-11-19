@@ -10,9 +10,13 @@ any other HTTP/2 server returns UNIMPLEMENTED (or fails to speak gRPC at all).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
+import errno
 import inspect
+from itertools import chain
 import logging
 import socket
+import time
 from typing import TYPE_CHECKING
 
 import grpc
@@ -31,6 +35,28 @@ ZEROCONF_TYPE = "_sonysmarthome._tcp.local."
 # A registered method used to confirm a candidate port speaks the service.
 _PROBE_METHOD = f"/{GRPC_SERVICE}/GetSessionRandom"
 
+# The TV's dynamic port has only ever been seen in the Linux ephemeral range,
+# so that is scanned first; the rest of the unprivileged ports follow, each
+# port once.
+EPHEMERAL_PORTS = range(32768, 61000)
+OTHER_PORTS = tuple(chain(range(1024, 32768), range(61000, 65536)))
+# A scan is the last resort after the cached port and mDNS. It is repeated at
+# most this often per TV: sooner while the TV's address answers at all (a scan
+# is then quick: closed ports refuse at once), rarely while it is silent (every
+# port would wait out its timeout, and a silent TV has no port to find).
+SCAN_INTERVAL_ALIVE = 15 * 60
+SCAN_INTERVAL_SILENT = 6 * 60 * 60
+_DATA_SCANS = "bravia_tv_grpc_port_scans"
+# Ports probed to tell whether the TV's address answers at all: its REST API,
+# Cast, and the HA TV Agent. A refusal counts as an answer.
+_ALIVE_PROBE_PORTS = (80, 8008, 8585, 443)
+_SILENT_ERRNOS = {
+    errno.EHOSTUNREACH,
+    errno.ENETUNREACH,
+    errno.EHOSTDOWN,
+    errno.ETIMEDOUT,
+}
+
 
 def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     try:
@@ -40,13 +66,33 @@ def _port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
+def host_answers(
+    host: str, ports: Iterable[int] = _ALIVE_PROBE_PORTS, timeout: float = 0.7
+) -> bool:
+    """Whether anything at ``host`` answers TCP at all: a connection, or a
+    refusal. Silence on every probed port (timeouts, no route) says the TV is
+    off the network, where a port scan could only wait."""
+    for port in ports:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except ConnectionRefusedError:
+            return True
+        except TimeoutError:
+            continue
+        except OSError as err:
+            if err.errno in _SILENT_ERRNOS or err.errno is None:
+                continue
+            return True  # some other answer from the network stack
+    return False
+
+
 def scan_open_ports(
-    host: str, ports: range, timeout: float = 0.3, workers: int = 500
+    host: str, ports: Iterable[int], timeout: float = 0.3, workers: int = 200
 ) -> list[int]:
     """Return the subset of ``ports`` accepting TCP connections on ``host``.
 
-    Closed ports refuse immediately; only filtered ports wait the full timeout,
-    so a high worker count keeps a full-range scan to a few tens of seconds.
+    Closed ports refuse immediately; only filtered ports wait the full timeout.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -164,7 +210,7 @@ async def async_resolve_device_mdns(
 def discover_grpc_port(
     host: str,
     candidate_ports: tuple[int, ...] = (),
-    scan_range: range | None = None,
+    scan_range: Iterable[int] | None = None,
 ) -> int | None:
     """Locate the gRPC control port on ``host``.
 
@@ -188,3 +234,66 @@ def discover_grpc_port(
             _LOGGER.info("Discovered ControlDeviceService on %s:%s", host, port)
             return port
     return None
+
+
+def scan_for_grpc_port(host: str) -> int | None:
+    """Scan ``host`` for the control service: the ephemeral range first, then
+    the remaining unprivileged ports (each port once)."""
+    return discover_grpc_port(host, (), EPHEMERAL_PORTS) or discover_grpc_port(
+        host, (), OTHER_PORTS
+    )
+
+
+async def async_resolve_port(
+    hass: HomeAssistant,
+    host: str,
+    cached: int | None,
+    manual: int | None = None,
+    *,
+    hint: int | None = None,
+    scan_key: str | None = None,
+) -> int | None:
+    """Locate the dynamic gRPC port: manual -> hint -> cached -> mDNS -> scan.
+
+    ``hint`` is a port mDNS just announced for this TV. ``scan_key`` (the
+    config entry id) rate-limits the scan across attempts; without one the
+    scan always runs (the config flow, where the user is waiting)."""
+    run = hass.async_add_executor_job
+    # 0. Manual override from options — try it first (escape hatch for networks
+    #    where discovery is blocked). If it no longer serves (TV rebooted onto a
+    #    new port), fall through to normal discovery rather than failing.
+    seen: set[int] = set()
+    for candidate in (manual, hint, cached):
+        # 1. The port mDNS announced, then the one from the previous run —
+        #    instant when the TV hasn't rebooted.
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            if await run(is_control_device_service, host, candidate):
+                return candidate
+    # 2. mDNS (_sonysmarthome._tcp) — fast, handles a changed port after reboot.
+    #    Best-effort: any zeroconf hiccup must fall through to the scan, never
+    #    fail the caller.
+    try:
+        port = await async_discover_port_mdns(hass, host)
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("mDNS port discovery failed; falling back to scan", exc_info=True)
+        port = None
+    if port and port not in seen and await run(is_control_device_service, host, port):
+        return port
+    # 3. TCP scan — last resort, for networks where mDNS does not get through.
+    if scan_key is not None:
+        scans: dict[tuple[str, bool], float] = hass.data.setdefault(_DATA_SCANS, {})
+        alive = await run(host_answers, host)
+        last = scans.get((scan_key, alive))
+        now = time.monotonic()
+        if alive:
+            if last is not None and now - last < SCAN_INTERVAL_ALIVE:
+                return None
+        elif last is None or now - last < SCAN_INTERVAL_SILENT:
+            # Nothing answers at that address, so a scan would only wait out
+            # every port. Note when that was first seen, and scan much later
+            # in case the TV merely ignores the ports probed.
+            scans.setdefault((scan_key, alive), now)
+            return None
+        scans[(scan_key, alive)] = now
+    return await run(scan_for_grpc_port, host)

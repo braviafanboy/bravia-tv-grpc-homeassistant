@@ -22,15 +22,10 @@ import json
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from .keys import hmac_key_bytes
 from .wire import length_delimited, parse_fields
 
 APPLICATION_LIST_PATH = "system_setting.application_list"
-
-
-def _hmac_key_bytes(hmac_key_hex: str) -> bytes:
-    if len(hmac_key_hex) == 64:
-        return bytes.fromhex(hmac_key_hex)
-    return hmac_key_hex.encode("utf-8")[:32].ljust(32, b"\x00")
 
 
 def parse_get_nonce_response(raw: bytes) -> bytes:
@@ -63,7 +58,7 @@ def build_nonce_gated_request(
         + length_delimited(3, session_id.encode())
     )
     preimage = nested + length_delimited(2, embedded)
-    auth = hmac.new(_hmac_key_bytes(hmac_key_hex), preimage, hashlib.sha256).digest()
+    auth = hmac.new(hmac_key_bytes(hmac_key_hex), preimage, hashlib.sha256).digest()
     return length_delimited(1, preimage) + length_delimited(2, auth)
 
 
@@ -103,13 +98,35 @@ def decrypt_gcm_response(raw: bytes, session_key_hex: str) -> bytes:
     return AESGCM(key).decrypt(gcm_nonce, ciphertext + gcm_tag, None)
 
 
+def _clean_text(value: object) -> object:
+    """A string that Home Assistant can serialise: a JSON ``\\udXXX`` escape
+    without its pair decodes to a lone surrogate, which is not valid UTF-8."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace").decode("utf-8")
+    return value
+
+
 def parse_application_list_response(raw: bytes, session_key_hex: str) -> list[dict]:
-    """Decrypt and parse the app list -> ``[{"id", "label", "resources"}, ...]``."""
+    """Decrypt and parse the app list -> ``[{"id", "label", "resources"}, ...]``.
+
+    Only well-formed entries (objects) are returned, with ``id`` and ``label``
+    made safe to serialise; anything else in the list is dropped."""
     plaintext = decrypt_gcm_response(raw, session_key_hex)
     idx = plaintext.find(b"[{")
     if idx < 0:
         return []
-    obj, _ = json.JSONDecoder().raw_decode(
-        plaintext[idx:].decode("utf-8", "surrogatepass")
-    )
-    return obj if isinstance(obj, list) else []
+    # The JSON is the tail of a protobuf wrapper: decode leniently so a stray
+    # byte after it cannot fail the whole read (raw_decode stops at the end
+    # of the list).
+    obj, _ = json.JSONDecoder().raw_decode(plaintext[idx:].decode("utf-8", "replace"))
+    if not isinstance(obj, list):
+        return []
+    apps: list[dict] = []
+    for item in obj:
+        if not isinstance(item, dict):
+            continue
+        for key in ("id", "label"):
+            if key in item:
+                item[key] = _clean_text(item[key])
+        apps.append(item)
+    return apps

@@ -359,7 +359,10 @@ class BraviaTvPowerSavingSelect(BraviaTvAgentEntity, SelectEntity):
 _RANGE_LABELS = {
     "sdr": "SDR",
     "hdr10": "HDR10",
+    "hdr10plus": "HDR10+",
     "hlg": "HLG",
+    # This TV reports Dolby Vision as the bare "dolby" (see sensor._HDR_NAMES).
+    "dolby": "Dolby Vision",
     "dolby_vision": "Dolby Vision",
     "dolbyvision": "Dolby Vision",
 }

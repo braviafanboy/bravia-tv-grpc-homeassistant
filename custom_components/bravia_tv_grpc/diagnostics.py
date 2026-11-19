@@ -11,17 +11,23 @@ from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from .const import CONF_GRPC_DEVICE_ID, CONF_GRPC_KEYS, DOMAIN
 from .coordinator import BraviaTvCoordinator
 
-# Secrets and personally-identifying values. Covers both config-entry keys and
-# the gRPC state paths (serial number) that appear in coordinator data.
+# Secrets and personally-identifying values. Covers config-entry keys, the
+# gRPC state paths that carry identifiers or names people chose, and the keys
+# inside the agent's blocks that say what is playing or which devices are
+# paired. Diagnostics get attached to public issues: anything that says who
+# or where must not be in them. A redacted key is redacted whole, which also
+# covers the values the TV sends as JSON text.
 TO_REDACT = {
     CONF_GRPC_KEYS,
     CONF_GRPC_DEVICE_ID,
+    CONF_HOST,
     "device_id",
     "hmac_key",
     "session_key",
@@ -35,6 +41,23 @@ TO_REDACT = {
     "agent_token",
     "rest_psk",
     "agent_cert",
+    # Who the agent says it is paired with: a name, and this Home Assistant's
+    # own address on the network.
+    "paired_with",
+    "paired_from",
+    # Names the user chose: the TV's own, the entry's (it holds the address).
+    "system_setting.friendly_name",
+    "title",
+    "name",
+    # What is playing.
+    "artist",
+    "album",
+    "artwork_url",
+    # Paired and connected devices: their names and ids, as JSON text.
+    "sound_setting.volume.bluetooth.device_info",
+    "sound_setting.audio_output.available_devices",
+    "sound_setting.audio_output.active_devices",
+    "hdmi_connected_device.sshinfo",
     # Paired wireless-speaker identifiers (surfaced as sensor attributes).
     *(
         f"speaker_connection_setting.{field}.{pos}"
@@ -51,8 +74,12 @@ def _diagnostics(
     caps = coordinator.client.capabilities
     return {
         "entry": {
-            "title": entry.title,
             "data": async_redact_data(dict(entry.data), TO_REDACT),
+            "options": async_redact_data(dict(entry.options), TO_REDACT),
+        },
+        "connection": {
+            "offline": coordinator.offline,
+            "connected": coordinator.client.connected,
         },
         "capabilities": {
             path: {
@@ -74,7 +101,7 @@ def _diagnostics(
             "pinned_fingerprint": coordinator.agent.fingerprint
             if coordinator.agent
             else None,
-            "rest": coordinator.agent_value("rest"),
+            "rest": async_redact_data(coordinator.agent_value("rest") or {}, TO_REDACT),
             "picture_targets": sorted(
                 (coordinator.agent_value("picture", "targets") or {}).keys()
             ),
@@ -110,7 +137,6 @@ async def async_get_device_diagnostics(
     coordinator: BraviaTvCoordinator = hass.data[DOMAIN][entry.entry_id]
     return {
         "device": {
-            "name": device.name,
             "model": device.model,
             "manufacturer": device.manufacturer,
             "sw_version": device.sw_version,

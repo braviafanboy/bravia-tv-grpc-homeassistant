@@ -134,6 +134,9 @@ class BraviaTvSwitch(BraviaTvEntity, SwitchEntity):
         self._attr_translation_key = translation_key
         if grpc_path in _DISABLED_BY_DEFAULT:
             self._attr_entity_registry_enabled_default = False
+        # The power switch says "off" for an unreachable TV and can turn it
+        # on through the cloud, like the media player.
+        self._available_offline = grpc_path == "power"
 
     @property
     def is_on(self) -> bool | None:

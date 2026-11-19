@@ -39,6 +39,8 @@ _FW_START_AVAIL = "fw_update.start_update_availability"
 _IN_PROGRESS_STATES = {"update_ongoing", "wait_for_reboot", "merging"}
 _RELEASE_NOTES_TIMEOUT = 10
 _RELEASE_NOTES_MAX_CHARS = 8000
+# The page's address comes from the TV: read a bounded amount of it.
+_RELEASE_NOTES_MAX_BYTES = 512 * 1024
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -137,7 +139,15 @@ class BraviaTvFirmwareUpdate(BraviaTvEntity, UpdateEntity):
                 session = async_get_clientsession(self.hass)
                 async with session.get(url) as resp:
                     resp.raise_for_status()
-                    body = await resp.text()
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in resp.content.iter_chunked(65536):
+                        chunks.append(chunk)
+                        size += len(chunk)
+                        if size >= _RELEASE_NOTES_MAX_BYTES:
+                            break
+                    raw = b"".join(chunks)[:_RELEASE_NOTES_MAX_BYTES]
+                    body = raw.decode(resp.charset or "utf-8", "replace")
         except Exception:  # noqa: BLE001
             _LOGGER.debug("release notes fetch failed for %s", url, exc_info=True)
             return None

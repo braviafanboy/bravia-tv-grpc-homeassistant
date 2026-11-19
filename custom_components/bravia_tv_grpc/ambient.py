@@ -30,7 +30,16 @@ BLOCK = "ambient"
 # Lux of each curve anchor; the agent reports its own axis, this is the
 # fallback for naming before it has.
 ANCHOR_LUX = (0, 10, 25, 60, 150, 500)
-STATES = ["off", "active", "paused", "unavailable"]
+# The agent's states. Its "unavailable" (no light sensor, no key, ...) is shown
+# as "not_available": the word itself is the state Home Assistant gives an
+# entity that cannot be reached, and a sensor reporting it would look dead.
+_AGENT_UNAVAILABLE = "unavailable"
+NOT_AVAILABLE = "not_available"
+STATES = ["off", "active", "paused", NOT_AVAILABLE]
+# The picture Brightness slider's top when the TV does not say (0..50 on the
+# sets seen so far).
+_DEFAULT_BRIGHTNESS_MAX = 50
+_BRIGHTNESS_PATH = "display_setting.brightness"
 
 
 class BraviaTvAmbientEntity(BraviaTvAgentEntity):
@@ -76,7 +85,6 @@ class BraviaTvAmbientAnchor(BraviaTvAmbientEntity, NumberEntity):
     _attr_translation_key = "ambient_anchor"
     _attr_entity_category = EntityCategory.CONFIG
     _attr_native_min_value = 0
-    _attr_native_max_value = 50
     _attr_native_step = 1
     _attr_mode = NumberMode.BOX
 
@@ -84,6 +92,12 @@ class BraviaTvAmbientAnchor(BraviaTvAmbientEntity, NumberEntity):
         super().__init__(coordinator, f"anchor_{index}")
         self._index = index
         self._attr_translation_placeholders = {"lux": str(ANCHOR_LUX[index])}
+        # The anchors are Brightness values: use the slider's own range.
+        meta = coordinator.client.capabilities.get(_BRIGHTNESS_PATH)
+        top = getattr(meta, "max", None)
+        self._attr_native_max_value = (
+            top if isinstance(top, int) and top > 0 else _DEFAULT_BRIGHTNESS_MAX
+        )
 
     def _curve(self) -> list[int] | None:
         curve = self.agent_value("curve")
@@ -129,6 +143,12 @@ class BraviaTvAmbientStatusSensor(BraviaTvAmbientEntity, SensorEntity):
     _attr_translation_key = "ambient_status"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = STATES
+    # The readings move with the room's light and the curves are a block of
+    # numbers: kept as attributes for dashboards and templates, but not
+    # written to the recorder with every change.
+    _unrecorded_attributes = frozenset(
+        {"brightness", "target", "lux", "anchors_lux", "curves"}
+    )
 
     def __init__(self, coordinator: BraviaTvCoordinator) -> None:
         super().__init__(coordinator, "status")
@@ -136,6 +156,8 @@ class BraviaTvAmbientStatusSensor(BraviaTvAmbientEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         state = self.agent_value("state")
+        if state == _AGENT_UNAVAILABLE:
+            return NOT_AVAILABLE
         return state if state in STATES else None
 
     @property

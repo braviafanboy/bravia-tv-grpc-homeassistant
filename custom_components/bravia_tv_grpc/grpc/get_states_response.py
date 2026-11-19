@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .notify_decode import _maybe_signed_int, _nested_string, _nested_varint
+from .notify_decode import (
+    _maybe_signed_int,
+    _nested_string,
+    _nested_varint,
+    extract_array_value,
+)
 from .wire import decode_field, read_varint
 
 
@@ -32,21 +37,19 @@ def parse_get_states_response(raw: bytes) -> dict[str, Any]:
 
 
 def _parse_states_blob(blob: bytes, out: dict[str, Any]) -> None:
-    """Walk nested length-delimited fields for entry streams."""
+    """Read the states out of the reply's signed wrapper.
+
+    The wrapper is ``{serialized = 1, hmac = 2, key_id = 3}``: only field 1
+    holds states. The other two are a MAC and a key name, and reading them as
+    a state entry could (rarely) invent a path out of random MAC bytes."""
     pos = 0
     while pos < len(blob):
         field, pos = decode_field(blob, pos)
         if not field:
             break
         field_num, wire_type, payload = field
-        if wire_type != 2 or not isinstance(payload, bytes):
-            continue
-        if field_num == 1:
+        if wire_type == 2 and isinstance(payload, bytes) and field_num == 1:
             _parse_entries_stream(payload, out)
-        else:
-            path, value = _parse_state_entry(payload)
-            if path:
-                out[path] = value
 
 
 def _parse_entries_stream(stream: bytes, out: dict[str, Any]) -> None:
@@ -54,22 +57,26 @@ def _parse_entries_stream(stream: bytes, out: dict[str, Any]) -> None:
     while pos < len(stream):
         if stream[pos] != 0x0A:
             break
-        path, value, consumed = _parse_one_entry(stream[pos:])
-        if consumed <= 0:
+        path, value, next_pos = _parse_one_entry(stream, pos)
+        if next_pos <= pos:
             break
-        pos += consumed
+        pos = next_pos
         if path:
             out[path] = value
 
 
-def _parse_one_entry(data: bytes) -> tuple[str | None, Any, int]:
-    if not data or data[0] != 0x0A:
-        return None, None, 0
-    entry_len, i = read_varint(data, 1)
+def _parse_one_entry(data: bytes, pos: int = 0) -> tuple[str | None, Any, int]:
+    """Parse the entry starting at ``pos``; return ``(path, value, next_pos)``.
+
+    ``next_pos`` equal to ``pos`` means there is no complete entry there. The
+    entry is read in place (by offset), so a long stream is not re-copied for
+    every entry."""
+    if pos >= len(data) or data[pos] != 0x0A:
+        return None, None, pos
+    entry_len, i = read_varint(data, pos + 1)
     if i + entry_len > len(data):
-        return None, None, 0
-    chunk = data[i : i + entry_len]
-    path, value = _parse_state_entry(chunk)
+        return None, None, pos
+    path, value = _parse_state_entry(data[i : i + entry_len])
     return path, value, i + entry_len
 
 
@@ -142,6 +149,9 @@ def _extract_get_states_value(fields: dict[int, tuple[int, Any]]) -> Any:
             if text and all(c.isprintable() or c in "\n\r\t" for c in text):
                 return text
             return raw.hex()
+    found, value = extract_array_value(fields)
+    if found:
+        return value
     return None
 
 

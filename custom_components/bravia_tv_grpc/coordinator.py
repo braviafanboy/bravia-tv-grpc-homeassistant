@@ -9,31 +9,47 @@ dict, seeded from the cloud snapshot, updated from the TV's report after each
 command and refreshed by a slow poll. All blocking gRPC work is run in the
 executor; the notify worker is a background thread that hands values back to
 the event loop thread-safely.
+
+The entry stays loaded while the TV cannot be reached (standby, unplugged,
+rebooting onto another port): the coordinator goes ``offline``, the TV reads
+as off, and a background loop reconnects. What the TV last said about itself
+(its capability schema, and the cloud's) is kept in a small store, so Home
+Assistant can also start while the TV is off.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timedelta
+from functools import partial
 import logging
 import time
 from typing import Any
 
+import aiohttp
 from awesomeversion import AwesomeVersion, AwesomeVersionException
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from . import dashboard as dashboards
 from . import picture_profiles
-from .bravia_tv_client import BraviaTvGrpcClient
+from .bravia_tv_client import (
+    BraviaTvAuthError,
+    BraviaTvConnectionError,
+    BraviaTvError,
+    BraviaTvGrpcClient,
+)
 from .const import (
     AGENT_CLIENT_NAME,
     AGENT_MIN_VERSION,
@@ -46,6 +62,7 @@ from .const import (
     CONF_FW_PENDING,
     CONF_GRPC_DEVICE_ID,
     CONF_GRPC_KEYS,
+    CONF_GRPC_PORT,
     CONF_MODEL,
     CONF_MODEL_ID,
     CONF_PICTURE_EVENT_REFRESH,
@@ -64,6 +81,7 @@ from .grpc import agent as agentmod
 from .grpc import cloud_commands as cloud
 from .grpc import credentials as cred
 from .grpc.application_list import APPLICATION_LIST_PATH
+from .grpc_discovery import async_resolve_port
 from .util import friendly_enum_label, parse_json_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,6 +116,10 @@ CLOUD_PREFIX = "cloud."
 # Overall budget for the best-effort cloud load at startup; the TV is already
 # fully usable from the local plane before this runs.
 _CLOUD_LOAD_TIMEOUT = 15
+# Upper bound on one cloud command, token refresh and result wait included
+# (the result wait alone is 25 s). Commands run one at a time, so a request
+# that hangs must not hold up the next for minutes.
+_CLOUD_COMMAND_TIMEOUT = 45
 # Cloud-only states have no push. The TV uploads its cloud snapshot on its own
 # (debounced) schedule, so a slow poll catches changes made with the TV remote
 # (e.g. a sleep timer set on the TV) within a few minutes.
@@ -156,14 +178,43 @@ AGENT_ONLINE = "agent.online"
 _AGENT_APP_PATH = "system_setting.application"
 _AGENT_DEEP_LINK = "application.deep_link"
 _AGENT_PAIR_WINDOW = 60
+# How often the token is asked for while a pairing waits on the TV, and how
+# long after the agent's own deadline for the request it is still tried.
+_AGENT_PAIR_POLL = 0.5
+# How long a pairing by code may take in all: the agent gives a request 30 s
+# to reach the viewer and the viewer two minutes to answer.
+_AGENT_PAIR_PATIENCE = 200
 _AGENT_PAIR_RETRY = timedelta(minutes=10)
+# While the agent's port presents a certificate other than the pinned one:
+# how often to look whether the agent we know is back.
+_AGENT_IDENTITY_RECHECK = 60
 _AGENT_MANIFEST_INTERVAL = timedelta(hours=6)
 _AGENT_BACKOFF_MAX = 60
-# Session keys last 24 h and the TV forgets the session when they lapse;
-# renew this long before expiry, in place, and retry this often on failure.
+# Session keys last 24 h and the TV forgets the session when they lapse.
+# They only come from Sony's cloud, so they are renewed at half their life, in
+# place: local control then rides out a cloud outage of up to half a day
+# instead of an hour. (When a bundle does not say when its keys were issued,
+# renew this long before expiry.) Retry this often on failure.
 _KEY_RENEWAL_LEAD = timedelta(hours=1)
 _KEY_RENEWAL_RETRY = timedelta(minutes=10)
-_KEY_RENEWAL_FALLBACK = timedelta(hours=23)
+# The TV refuses a key for a moment after Sony has issued it (measured: it
+# took about two seconds), so the first handshake with new keys is given this
+# many tries, this far apart, before it counts as refused.
+_NEW_KEY_ATTEMPTS = 5
+_NEW_KEY_WAIT = 1.5
+_KEY_RENEWAL_FALLBACK = timedelta(hours=12)
+# While reconnecting, fetch fresh keys for a TV that rejects ours at most
+# this often: each fetch is a round trip to Sony.
+_KEY_REFRESH_MIN_INTERVAL = 300.0
+# Reconnect attempts while the TV is unreachable: first after this long, then
+# doubling up to the cap. mDNS seeing the TV, or a cloud power-on, retries at
+# once.
+_RECONNECT_MIN = 5.0
+_RECONNECT_MAX = 60.0
+# How long an mDNS announcement seen while connected stays worth trying first
+# once the connection drops.
+_ANNOUNCEMENT_FRESH = 300.0
+_CACHE_VERSION = 1
 # gRPC paths whose change switches the TV to another set of picture values
 # (they are stored per picture mode, input, content mode and SDR/HDR), so the
 # agent re-reads its REST picture settings when one of them changes.
@@ -177,11 +228,43 @@ _PICTURE_REFRESH_DEBOUNCE = 1.0
 # The TV reports an HDR signal ~2 s before it applies its HDR picture values
 # (measured live: HDR10 at t, values switched at t+1.7…2.1 s); wait past that.
 _HDR_REFRESH_DELAY = 3.0
+# A profile is captured from what the agent last read. Before a capture the
+# agent is asked to read again; it answers at once and sends a state event
+# only if something changed, so this is how long to wait for one.
+_PICTURE_FRESH_WAIT = 3.0
+# hass.data key: the profile chosen on each TV's device page, kept across a
+# reload of the entry (never across a restart: nothing is chosen then).
+_DATA_PROFILE_CHOICE = f"{DOMAIN}_profile_choice"
 # IP control can lag the panel after wake; only report it unreachable after this.
 _REST_UNAVAILABLE_GRACE = timedelta(minutes=3)
 # How often to look for an agent that was not there at startup (installed or
 # first opened later), so it is picked up without a reload.
 _AGENT_PROBE_INTERVAL = 300
+
+
+def schema_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Where a TV's last served capability schema (and cloud capabilities)
+    is kept."""
+    return Store(hass, _CACHE_VERSION, f"{DOMAIN}.{entry_id}.schema")
+
+
+class BraviaTvReauthRequired(Exception):
+    """Sony no longer accepts the stored refresh token: only the user can
+    recover, by signing in again."""
+
+
+def needs_reauth(err: Exception) -> bool:
+    """Whether a key-refresh failure means the user must re-authenticate.
+
+    Only a Sony cloud rejection of the refresh token (or a missing token) is
+    unrecoverable without the user; network resets, 5xx and TV-side handshake
+    errors are transient and should be retried instead.
+    """
+    if isinstance(err, cred.GrpcCredentialsError):
+        return True
+    if isinstance(err, cred.GrpcCredentialsRefreshError):
+        return err.status in (400, 401, 403)
+    return False
 
 
 def agent_path(block: str) -> str:
@@ -224,6 +307,9 @@ def _picture_set_changed(path: str, previous: Any, value: Any) -> bool:
 class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Push-driven coordinator; data is a ``{grpc_path: value}`` dict."""
 
+    # Always created for a config entry (the base class allows none).
+    config_entry: ConfigEntry
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -233,6 +319,32 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(hass, _LOGGER, name=DOMAIN, config_entry=entry)
         self.client = client
         self._entry = entry
+        # The TV cannot be reached right now (standby, unplugged, rebooting):
+        # the entry stays loaded, the TV reads as off, and a background loop
+        # reconnects. See the "connection" section below.
+        self.offline = False
+        self._shutting_down = False
+        self._reconnect_task: asyncio.Task | None = None
+        self._reconnect_kick = asyncio.Event()
+        # An address mDNS reported for this TV while it was unreachable. It is
+        # tried, and only kept once that address proved to be the TV.
+        self._address_hint: tuple[str, int] | None = None
+        self._reconnect_seeded = False
+        # The last mDNS announcement, kept while connected: if the connection
+        # then drops (a reboot onto another port), it is where to look first.
+        self._announced: tuple[str, int, float] | None = None
+        self._last_key_refresh = 0.0
+        # What the TV last said about itself, kept across restarts: its
+        # capability schema (entities are built from it when Home Assistant
+        # starts while the TV is off) and its cloud capabilities (so they do
+        # not vanish when Sony is unreachable at start-up).
+        self._cache = schema_store(hass, entry.entry_id)
+        self._cache_data: dict[str, Any] | None = None
+        # The schema and cloud capabilities the entities were built from; a
+        # different set after a reconnect means the entry is set up afresh.
+        self._entity_schema: frozenset = frozenset()
+        self._entity_cloud: dict[str, tuple[str, ...]] = {}
+        self._cloud_loaded = False
         self._state: dict[str, Any] = {}
         self._cancel_refresh: Any = None
         self._refresh_failures = 0
@@ -263,7 +375,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.agent_info: dict[str, Any] = {}
         self._agent_task: asyncio.Task | None = None
         self._agent_last_pair: datetime | None = None
-        # Answers the agent's token_needed while a dashboard is showing.
+        # Wakes the agent loop early (the user accepted a new certificate).
+        self._agent_wake = asyncio.Event()
+        # The certificate last reported in the "agent identity changed" repair.
+        self._agent_identity_reported: str | None = None
+        self._agent_pairing_reported = False
+        self._agent_pair_task: asyncio.Task | None = None
+        self._agent_pair_outcome: str | None = None
+        # Answers the agent's token_needed while a dashboard is showing: only
+        # for a dashboard this integration opened (the session), never just
+        # because the other end of the link says it wants a token.
+        self._dashboard_session: dict[str, Any] | None = None
+        self._dashboard_refusal_logged = False
         self._dashboard_token_task: asyncio.Task | None = None
         self._dashboard_token_sent = 0.0
         self._cancel_key_renewal: Any = None
@@ -280,7 +403,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Profiles live as files under <config>/bravia_picture_profiles/<tv>/.
         # The folder name (a persisted, collision-free slug) is resolved and the
         # store built when the TV is linked (async_start).
-        self._picture_profiles: picture_profiles.PictureProfileStore | None = None
+        self._profile_store: picture_profiles.PictureProfileStore | None = None
         # A folder re-scan picks up files added/edited outside HA; gated on a
         # cheap signature so unchanged folders cost one scandir.
         self._cancel_profile_scan: Any = None
@@ -289,7 +412,12 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Lightweight metadata per profile (no settings) for the select's
         # attributes: {name: {picture_mode, dynamic_range, settings, created}}.
         self._profile_meta: dict[str, dict[str, Any]] = {}
+        # Nothing is chosen until the user chooses: Restore and Delete act on
+        # this, so it must never be a guess (it used to default to the first
+        # profile, also after every reload).
         self._selected_profile: str | None = None
+        # Set whenever an agent state document arrives.
+        self._agent_document_event = asyncio.Event()
         # The picture mode a restore goes into: None = "From saved profile".
         # Reset to the chosen profile's own mode whenever a profile is chosen;
         # picking another target is a deliberate per-restore override.
@@ -308,17 +436,49 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # is no video): the TV keeps separate picture values per class.
         self._last_hdr_type: str | None = None
 
-    async def async_start(self) -> None:
-        """Connect, fetch schema, seed initial state, and start the push stream."""
-        await self.hass.async_add_executor_job(self.client.connect)
-        await self.hass.async_add_executor_job(self.client.get_capabilities)
+    @property
+    def _picture_profiles(self) -> picture_profiles.PictureProfileStore:
+        """The profile folder's store (it exists once the TV was linked)."""
+        if self._profile_store is None:
+            raise HomeAssistantError("picture profiles are not ready yet")
+        return self._profile_store
+
+    @_picture_profiles.setter
+    def _picture_profiles(self, store: picture_profiles.PictureProfileStore) -> None:
+        self._profile_store = store
+
+    async def async_start(self, *, verify: bool = False) -> None:
+        """Connect, fetch schema, seed initial state, and start the push stream.
+
+        Raises BraviaTvConnectionError (or BraviaTvReauthRequired) when the TV
+        cannot be reached now; nothing has been started then, so the caller
+        may try another address or fall back to ``async_start_offline``.
+        ``verify`` also requires the address to prove it is this TV."""
+        await self.async_load_cache()
         # Prefer a full on-demand snapshot straight from the TV (GetStates).
         # The Sony cloud is then consulted (best effort) for the TV's cloud
         # capability list and the cloud-only states, and as a fallback seed for
         # the local paths if the device read failed.
-        seeded = await self._seed_from_device()
-        await self._async_load_cloud(seed_local=not seeded)
-        # Deltas arrive on a worker thread; marshal them onto the loop.
+        seeded = await self.async_connect(verify=verify)
+        # Before anything else is built on the address (the agent link is).
+        self._persist_address()
+        await self._async_finish_start(seeded)
+
+    async def async_start_offline(self) -> None:
+        """Start without the TV, from the schema it served last time.
+
+        The entities exist, the TV reads as off, and the reconnect loop takes
+        it from there. Raises BraviaTvConnectionError when no schema is stored
+        (the TV has never been reached from this install)."""
+        await self.async_load_cache()
+        if not self._restore_schema():
+            raise BraviaTvConnectionError("no stored capability schema")
+        self._set_offline(True)
+        await self._async_finish_start(False)
+        self._start_reconnect_loop()
+
+    async def _async_finish_start(self, seeded: bool) -> None:
+        await self._async_load_cloud(seed_local=not seeded and not self.offline)
         # Resolve the (persisted, collision-free) profile folder and create it
         # now the TV is linked, then load it.
         self._picture_profiles = picture_profiles.PictureProfileStore(
@@ -329,44 +489,388 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         await self._picture_profiles.async_ensure_dir()
         await self._load_profiles()
-        self._selected_profile = self._profile_names[0] if self._profile_names else None
+        chosen = self.hass.data.get(_DATA_PROFILE_CHOICE, {}).get(self._entry.entry_id)
+        self._selected_profile = chosen if chosen in self._profile_names else None
         self._profiles_signature = await self._picture_profiles.async_signature()
         self._cancel_profile_scan = async_track_time_interval(
             self.hass, self._async_scan_profiles, PROFILE_SCAN_INTERVAL
         )
+        self._dashboard_session = await dashboards.async_get_session(
+            self.hass, self._entry.entry_id
+        )
+        self._entity_schema = self._schema_signature()
+        self._entity_cloud = dict(self.cloud_capabilities)
+        if not self.offline:
+            self._start_push()
+        self.async_set_updated_data(dict(self._state))
+        # Always-on safety net: notices a connection that died without the
+        # push worker seeing an error (a stream that hangs on an unreachable
+        # host), and hands over to the reconnect loop.
+        self._cancel_refresh = async_track_time_interval(
+            self.hass, self._async_periodic_refresh, _REFRESH_INTERVAL
+        )
+        if self.cloud_capabilities or (
+            not self._cloud_loaded and self._cloud_credentials()
+        ):
+            # Also retries the capability load when Sony was unreachable.
+            self._cancel_cloud_poll = async_track_time_interval(
+                self.hass, self._async_cloud_poll, _CLOUD_POLL_INTERVAL
+            )
+        if not self.offline:
+            await self._async_refresh_app_list()
+        self._schedule_key_renewal()
+        await self.async_start_agent()
+
+    # -- connection: schema cache, connect, offline, reconnect ---------------
+    async def async_load_cache(self) -> bool:
+        """Read the stored schema; True when one is there to start from."""
+        if self._cache_data is None:
+            data = await self._cache.async_load()
+            self._cache_data = data if isinstance(data, dict) else {}
+        text = self._cache_data.get("capabilities")
+        return isinstance(text, str) and bool(text)
+
+    def _restore_schema(self) -> bool:
+        """Give the client the stored schema; False when there is none."""
+        text = (self._cache_data or {}).get("capabilities")
+        if not isinstance(text, str) or not text:
+            return False
+        try:
+            return bool(self.client.load_capabilities(text))
+        except (TypeError, ValueError, RecursionError):
+            return False
+
+    async def _async_remember_schema(self) -> None:
+        """Keep the schema the TV just served, for a start without the TV."""
+        text = self.client.capabilities_json
+        if not isinstance(text, str) or not text or self._cache_data is None:
+            return
+        if self._cache_data.get("capabilities") != text:
+            self._cache_data["capabilities"] = text
+            await self._cache.async_save(self._cache_data)
+
+    def _schema_signature(self) -> frozenset:
+        """What entity creation depends on: every path and its type."""
+        caps = self.client.capabilities
+        if not isinstance(caps, dict):
+            return frozenset()
+        return frozenset(
+            (path, getattr(meta, "type", None)) for path, meta in caps.items()
+        )
+
+    async def _async_with_new_keys(self, handshake: Callable[[], Any]) -> None:
+        """Run a handshake that uses keys Sony has only just issued, again
+        for a few seconds while the TV refuses them: it takes the TV a moment
+        to learn a new key."""
+        for attempt in range(1, _NEW_KEY_ATTEMPTS + 1):
+            try:
+                await self.hass.async_add_executor_job(handshake)
+                return
+            except BraviaTvAuthError:
+                if attempt == _NEW_KEY_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_NEW_KEY_WAIT)
+
+    async def async_connect(self, *, verify: bool = False) -> bool:
+        """Open the channel, authenticate, read the schema and seed the state.
+
+        If the TV rejects the stored keys (a reboot invalidates them), fresh
+        ones are fetched from Sony once and the handshake is repeated. Returns
+        whether the state seed worked. Raises BraviaTvConnectionError when the
+        TV does not answer or will not have us right now, and
+        BraviaTvReauthRequired when only the user can fix it; the client is
+        left closed in both cases."""
+        client = self.client
+        run = self.hass.async_add_executor_job
+        try:
+            try:
+                await run(client.connect)
+            except BraviaTvAuthError as err:
+                _LOGGER.info("gRPC auth failed (%s); refreshing Sony session keys", err)
+                creds = await self._async_refresh_keys_for_connect()
+                await run(
+                    client.rekey,
+                    creds.get("hmac_key") or "",
+                    creds.get("key_id"),
+                    creds.get("session_key"),
+                )
+                try:
+                    await self._async_with_new_keys(client.connect)
+                except BraviaTvError as err2:
+                    # Fresh, valid cloud keys were still rejected after a few
+                    # seconds: the TV is almost certainly still settling after
+                    # a reboot. Signing in again would only yield equivalent
+                    # keys, so retry.
+                    raise BraviaTvConnectionError(
+                        f"TV rejected refreshed credentials, will retry: {err2}"
+                    ) from err2
+            await run(client.get_capabilities)
+            if verify and not await self._async_verify_tv():
+                raise BraviaTvConnectionError(
+                    f"{client.host} did not prove to be this TV"
+                )
+        except (BraviaTvError, BraviaTvReauthRequired):
+            await run(client.close)
+            raise
+        await self._async_remember_schema()
+        return await self._seed_from_device()
+
+    async def _async_refresh_keys_for_connect(self) -> dict[str, Any]:
+        """Fresh Sony session keys for a TV that rejected ours, persisted."""
+        creds = self._cloud_credentials()
+        device_id = self._cloud_device_id(creds) if creds else None
+        if not creds or not device_id:
+            raise BraviaTvReauthRequired("no Sony credentials stored")
+        now = time.monotonic()
+        if (
+            self._last_key_refresh
+            and now - self._last_key_refresh < _KEY_REFRESH_MIN_INTERVAL
+        ):
+            raise BraviaTvConnectionError(
+                "TV rejected the keys; new ones were just fetched"
+            )
+        self._last_key_refresh = now
+        try:
+            new_creds = await cred.async_refresh_credentials(
+                async_get_clientsession(self.hass), creds, device_id
+            )
+        except Exception as err:  # noqa: BLE001
+            if needs_reauth(err):
+                # The refresh token itself is no longer usable — only the user
+                # can recover, by re-logging in.
+                raise BraviaTvReauthRequired(str(err)) from err
+            # A transient cloud/network error (e.g. a reset connection while
+            # the TV is still booting): retry, do NOT force a re-login.
+            raise BraviaTvConnectionError(
+                f"Sony key refresh temporarily failed: {err}"
+            ) from err
+        self.hass.config_entries.async_update_entry(
+            self._entry,
+            data={
+                **self._entry.data,
+                CONF_GRPC_KEYS: cred.credentials_to_json(new_creds),
+            },
+        )
+        return new_creds
+
+    async def _async_verify_tv(self) -> bool:
+        """Whether the connected peer is this TV, not merely something that
+        speaks its protocol.
+
+        The handshake proves nothing about the far end, so an address learnt
+        from mDNS is only kept once it passes this: the encrypted app-list
+        read, whose reply only a holder of the session key (the TV, by way of
+        Sony) can produce. A relay to the real TV passes too, but gains
+        nothing by it; an impostor does not."""
+        if not getattr(self.client, "has_session_key", True):
+            _LOGGER.debug("no session key stored; cannot verify the TV's identity")
+            return True
+        try:
+            await self.hass.async_add_executor_job(self.client.read_application_list)
+        except Exception as err:  # noqa: BLE001 - any failure is "not proven"
+            _LOGGER.warning(
+                "%s:%s answers like a BRAVIA TV but could not prove it is %s (%s)",
+                self.client.host,
+                self.client.port,
+                self._entry.title,
+                err,
+            )
+            return False
+        return True
+
+    def _start_push(self) -> None:
+        # Deltas arrive on a worker thread; marshal them onto the loop.
         self.client.start_notify(
             self._on_delta_threadsafe,
             on_connection_lost=self._on_connection_lost,
             on_reconnect=self._on_reconnect,
         )
-        self.async_set_updated_data(dict(self._state))
-        # Always-on safety net: reconciles missed pushes and, on persistent
-        # failure, reloads to recover from a reboot even if the push worker
-        # never sees an error.
-        self._cancel_refresh = async_track_time_interval(
-            self.hass, self._async_periodic_refresh, _REFRESH_INTERVAL
+
+    def _set_offline(self, offline: bool) -> None:
+        self.offline = offline
+        if offline:
+            # An unreachable TV is off as far as anything here can tell; the
+            # next seed says otherwise. Everything keyed on power (agent and
+            # cloud entities, now-playing) follows.
+            self._state["power"] = False
+            self._state[AGENT_ONLINE] = False
+            if cloud_path("sleep_timer") in self._state:
+                self._state[cloud_path("sleep_timer")] = "off"
+
+    @callback
+    def _async_connection_lost(self, reason: str) -> None:
+        """The TV stopped answering: go offline and reconnect in the
+        background. The entry and its entities stay."""
+        if self.offline or self._shutting_down:
+            return
+        _LOGGER.info(
+            "%s is unreachable (%s); reconnecting in the background",
+            self.device_name,
+            reason,
         )
-        if self.cloud_capabilities:
-            self._cancel_cloud_poll = async_track_time_interval(
-                self.hass, self._async_cloud_poll, _CLOUD_POLL_INTERVAL
+        self._set_offline(True)
+        self.async_set_updated_data(dict(self._state))
+        announced = self._announced
+        if (
+            announced is not None
+            and time.monotonic() - announced[2] < _ANNOUNCEMENT_FRESH
+        ):
+            self._address_hint = announced[:2]
+        self._start_reconnect_loop()
+
+    def _start_reconnect_loop(self) -> None:
+        task = self._reconnect_task
+        if task is not None and not task.done():
+            return
+        self._reconnect_task = self._entry.async_create_background_task(
+            self.hass, self._async_reconnect_loop(), name="bravia_tv_reconnect"
+        )
+
+    @callback
+    def async_request_reconnect(self) -> None:
+        """Try to reconnect now instead of at the next interval."""
+        self._reconnect_kick.set()
+
+    @callback
+    def async_note_discovery(self, host: str, port: int | None) -> None:
+        """mDNS announced this TV at ``host:port``.
+
+        While the TV is connected that is no news, and an announcement naming
+        another address is not acted on: the connection we hold is the proof
+        of where the TV is. (It is remembered for a few minutes, as the place
+        to look first should that connection drop: a TV announces itself when
+        it comes back from a reboot, before the old connection is seen to be
+        dead.) While it is unreachable the address is tried at once, and kept
+        only if it proves to be the TV."""
+        if host and port:
+            self._announced = (host, int(port), time.monotonic())
+        if not self.offline:
+            return
+        if host and port:
+            self._address_hint = (host, int(port))
+        self.async_request_reconnect()
+
+    async def _async_reconnect_loop(self) -> None:
+        delay = _RECONNECT_MIN
+        await self.hass.async_add_executor_job(self.client.close)
+        while self.offline and not self._shutting_down:
+            try:
+                if await self._async_reconnect_once():
+                    return
+            except BraviaTvReauthRequired as err:
+                _LOGGER.warning(
+                    "Sony no longer accepts the stored sign-in for %s (%s); "
+                    "sign in again to reconnect",
+                    self._entry.title,
+                    err,
+                )
+                self._entry.async_start_reauth(self.hass)
+                return
+            except Exception:  # noqa: BLE001 - keep trying whatever happens
+                _LOGGER.exception("reconnecting to %s failed", self._entry.title)
+            self._reconnect_kick.clear()
+            try:
+                async with asyncio.timeout(delay):
+                    await self._reconnect_kick.wait()
+            except TimeoutError:
+                delay = min(delay * 2, _RECONNECT_MAX)
+            else:
+                delay = _RECONNECT_MIN
+
+    async def _async_try_address(self, host: str, port: int, *, verify: bool) -> bool:
+        self.client.host, self.client.port = host, port
+        try:
+            self._reconnect_seeded = await self.async_connect(verify=verify)
+        except BraviaTvConnectionError as err:
+            _LOGGER.debug("%s:%s: %s", host, port, err)
+            return False
+        return True
+
+    async def _async_reconnect_once(self) -> bool:
+        """One attempt to reach the TV again; True when it is back (or the
+        entry is being set up afresh)."""
+        data = self._entry.data
+        host = data[CONF_HOST]
+        hint, self._address_hint = self._address_hint, None
+        if hint is not None and hint[0] != host:
+            # mDNS says the TV moved. Believe it only if that address proves
+            # to be the TV; our stored address is not touched otherwise.
+            if await self._async_try_address(hint[0], hint[1], verify=True):
+                return await self._async_reconnected()
+            hint = None
+        port = await async_resolve_port(
+            self.hass,
+            host,
+            data.get(CONF_GRPC_PORT),
+            self._entry.options.get(CONF_GRPC_PORT) or None,
+            hint=hint[1] if hint is not None else None,
+            scan_key=self._entry.entry_id,
+        )
+        if not port or not await self._async_try_address(host, port, verify=False):
+            return False
+        return await self._async_reconnected()
+
+    def _persist_address(self) -> set[str]:
+        """Store the address the client is connected to, if it is not the
+        stored one (a new port after a reboot, an address that proved to be
+        the TV). Returns the keys that changed."""
+        host, port = self.client.host, self.client.port
+        if not isinstance(host, str) or not isinstance(port, int) or port <= 0:
+            return set()
+        data = self._entry.data
+        updates: dict[str, Any] = {}
+        if host != data.get(CONF_HOST):
+            updates[CONF_HOST] = host
+        if port != data.get(CONF_GRPC_PORT):
+            updates[CONF_GRPC_PORT] = port
+        if updates:
+            self.hass.config_entries.async_update_entry(
+                self._entry, data={**data, **updates}
             )
+        return set(updates)
+
+    async def _async_reconnected(self) -> bool:
+        updates = self._persist_address()
+        if CONF_HOST in updates or self._schema_signature() != self._entity_schema:
+            # Another address (the agent link is bound to the old one), or the
+            # TV now advertises other controls (a firmware update): the
+            # entities no longer fit, so set the entry up afresh.
+            _LOGGER.info("%s is back with changes; reloading", self._entry.title)
+            self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
+            return True
+        self._set_offline(False)
+        self._refresh_failures = 0
+        if not self._reconnect_seeded:
+            # Connected, but the state could not be read (as can happen at
+            # start-up too): "off" was only what unreachable meant. Leave the
+            # power unknown until the TV pushes it, and take what the cloud
+            # knows meanwhile.
+            self._state.pop("power", None)
+            await self._async_load_cloud(seed_local=True)
+        self._start_push()
+        self.async_set_updated_data(dict(self._state))
+        _LOGGER.info("%s is reachable again", self.device_name)
         await self._async_refresh_app_list()
-        self._schedule_key_renewal()
-        await self.async_start_agent()
+        return True
 
     # -- session key renewal ------------------------------------------------
     def _schedule_key_renewal(self, delay: timedelta | None = None) -> None:
-        """Renew the Sony session keys an hour before they expire, so the TV's
-        session never lapses underneath a working connection."""
+        """Renew the Sony session keys at half their life, so the TV's session
+        never lapses underneath a working connection and a cloud outage has
+        half a day to pass before it could."""
         if self._cancel_key_renewal is not None:
             self._cancel_key_renewal()
             self._cancel_key_renewal = None
         if delay is None:
             creds = self._cloud_credentials() or {}
             expires_at = creds.get("session_keys_expires_at")
+            fetched_at = creds.get("session_keys_fetched_at")
             if isinstance(expires_at, int | float):
-                seconds = expires_at - time.time() - _KEY_RENEWAL_LEAD.total_seconds()
-                delay = timedelta(seconds=max(60.0, seconds))
+                if isinstance(fetched_at, int | float) and expires_at > fetched_at:
+                    renew_at = fetched_at + (expires_at - fetched_at) / 2
+                else:
+                    renew_at = expires_at - _KEY_RENEWAL_LEAD.total_seconds()
+                delay = timedelta(seconds=max(60.0, renew_at - time.time()))
             else:
                 delay = _KEY_RENEWAL_FALLBACK
         _LOGGER.debug("Sony session key renewal in %s", delay)
@@ -391,11 +895,15 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     CONF_GRPC_KEYS: cred.credentials_to_json(new_creds),
                 },
             )
-            await self.hass.async_add_executor_job(
-                self.client.rekey,
-                new_creds["hmac_key"],
-                new_creds.get("key_id"),
-                new_creds.get("session_key"),
+            # The keys in use stay good meanwhile: a refused handshake puts
+            # them back (see the client's rekey).
+            await self._async_with_new_keys(
+                partial(
+                    self.client.rekey,
+                    new_creds["hmac_key"],
+                    new_creds.get("key_id"),
+                    new_creds.get("session_key"),
+                )
             )
         except Exception as err:  # noqa: BLE001 - transient cloud/TV errors
             _LOGGER.warning("Sony session key renewal failed, retrying later: %s", err)
@@ -418,40 +926,50 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             value = value.get(key)
         return value
 
+    def _stored_agent_fingerprint(self) -> str | None:
+        """SHA-256 of the agent certificate this entry is paired with."""
+        data = self._entry.data
+        fingerprint = agentmod.normalize_fingerprint(data.get(CONF_AGENT_FINGERPRINT))
+        if fingerprint is None:
+            # Entries from before only the fingerprint was kept.
+            cert = agentmod.decode_cert(data.get(CONF_AGENT_CERT))
+            fingerprint = agentmod.fingerprint_of(cert) if cert else None
+        return fingerprint
+
     async def async_start_agent(self) -> None:
         """Discover the agent on the TV's host and start following it.
 
         Best effort and never raises: without an agent the integration is
         unchanged. With one, the entry's stored token is tried first; if there
         is none or it is rejected, pairing runs (local app launch + pairing
-        window) as soon as the TV is on.
+        window) as soon as the TV is on. A certificate other than the pinned
+        one is never paired with on its own: that takes the user's say-so
+        (the "agent identity changed" repair).
         """
         host = self._entry.data.get("host")
         if not host or self._agent_task is not None:
             return
-        cert = agentmod.decode_cert(self._entry.data.get(CONF_AGENT_CERT))
-        client = agentmod.AgentClient(
-            async_get_clientsession(self.hass),
-            host,
-            token=self._entry.data.get(CONF_AGENT_TOKEN),
-            ssl_context=await self.hass.async_add_executor_job(
-                agentmod.make_ssl_context, cert
-            ),
-            cert=cert,
-        )
         try:
+            client = agentmod.AgentClient(
+                async_get_clientsession(self.hass),
+                host,
+                token=self._entry.data.get(CONF_AGENT_TOKEN),
+                fingerprint=self._stored_agent_fingerprint(),
+            )
             self.agent_info = await client.async_info()
-        except agentmod.AgentFingerprintMismatch:
-            # The agent was reinstalled (new key pair): forget the pin and the
-            # token and pair afresh, learning the new certificate.
-            _LOGGER.info("HA TV Agent on %s has a new certificate; re-pairing", host)
-            await self._async_unpin_agent(client)
-            try:
-                self.agent_info = await client.async_info()
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("no HA TV Agent on %s: %s", host, err)
-                self._schedule_agent_probe()
-                return
+        except agentmod.AgentFingerprintMismatch as err:
+            # Not the agent this entry is paired with: the app was reinstalled
+            # (new key pair), or something else answers on its port. Hand it
+            # nothing; keep checking whether the agent we know comes back.
+            _LOGGER.warning(
+                "The HA TV Agent on %s presents a different certificate; "
+                "waiting for confirmation before pairing with it",
+                host,
+            )
+            self.agent = client
+            self._raise_agent_identity_issue(err.got)
+            self._start_agent_loop()
+            return
         except Exception as err:  # noqa: BLE001 - absence must never break setup
             _LOGGER.debug("no HA TV Agent on %s: %s", host, err)
             self._schedule_agent_probe()
@@ -461,7 +979,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "paired", True
         ):
             # An unpaired agent (reinstalled, or unpaired from its screen)
-            # answers any token; pair again so ours is the only one it takes.
+            # takes no token at all, ours included: pair again.
             _LOGGER.info("HA TV Agent on %s is unpaired; pairing", host)
             client.token = None
         info = self.agent_info.get("agent") or {}
@@ -471,15 +989,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             host,
             info.get("contract"),
         )
-        self._agent_task = self._entry.async_create_background_task(
-            self.hass, self._async_agent_loop(), name="bravia_tv_agent"
-        )
+        self._start_agent_loop()
         self._update_agent_version_issue()
         if self.agent_update_checks:
             await self.async_check_agent_update()
             self._cancel_agent_manifest = async_track_time_interval(
                 self.hass, self.async_check_agent_update, _AGENT_MANIFEST_INTERVAL
             )
+
+    def _start_agent_loop(self) -> None:
+        self._agent_task = self._entry.async_create_background_task(
+            self.hass, self._async_agent_loop(), name="bravia_tv_agent"
+        )
 
     def _schedule_agent_probe(self) -> None:
         """Keep looking for an agent that is not (yet) answering."""
@@ -563,6 +1084,25 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         else:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+        # An agent speaking a later contract than this integration knows.
+        contract_id = f"agent_contract_{self._entry.entry_id}"
+        contract = agentmod.contract_of(self.agent_info)
+        if contract is not None and contract > agentmod.CONTRACT:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                contract_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="agent_contract",
+                translation_placeholders={
+                    "name": self.device_name,
+                    "contract": str(contract),
+                    "supported": str(agentmod.CONTRACT),
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, contract_id)
 
     @property
     def agent_version(self) -> str | None:
@@ -596,7 +1136,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         latest = self.agent_latest
         try:
             await self.agent.async_stage_update(
-                str(latest["url"]), latest.get("sha256"), latest.get("version")
+                str(latest["url"]),
+                str(latest.get("sha256") or ""),
+                str(latest.get("version") or ""),
             )
         except agentmod.AgentError as err:
             raise HomeAssistantError(
@@ -791,7 +1333,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) from err
         except dashboards.NoURLAvailableError as err:
             raise self._dashboard_error("dashboard_no_url") from err
-        token, expires_in = await dashboards.async_access_token(self.hass)
+        token, expires_in = await dashboards.async_access_token(
+            self.hass, interactive=dashboards.interactive_mode(mode)
+        )
         try:
             result = await agent.async_dashboard_open(
                 url,
@@ -816,6 +1360,12 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise self._dashboard_error("dashboard_no_overlay")
         if state != "shown":
             raise self._dashboard_error("dashboard_failed")
+        # From here until it closes or times out, the page may be handed
+        # fresh tokens.
+        self._dashboard_session = await dashboards.async_open_session(
+            self.hass, self._entry.entry_id, mode, duration
+        )
+        self._dashboard_refusal_logged = False
 
     async def async_close_dashboard(self) -> None:
         """Close the dashboard showing on the TV, if any."""
@@ -830,12 +1380,59 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise self._dashboard_error("dashboard_failed") from err
         except agentmod.AgentError as err:
             raise self._dashboard_error("agent_offline") from err
+        await self._async_end_dashboard_session()
+
+    async def _async_end_dashboard_session(self) -> None:
+        self._dashboard_session = None
+        await dashboards.async_close_session(self.hass, self._entry.entry_id)
+
+    @callback
+    def _dashboard_session_current(
+        self, block: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """The session of the dashboard this integration opened, while it is
+        still showing; ends it once it ran out or the TV reports it closed."""
+        session = self._dashboard_session
+        if session is None:
+            return None
+        opened = session.get("opened")
+        settled = (
+            isinstance(opened, int | float)
+            and time.time() - opened > dashboards.SESSION_SETTLE_S
+        )
+        if dashboards.session_alive(session) and not (
+            block.get("showing") is False and settled
+        ):
+            return session
+        self._dashboard_session = None
+        self.hass.async_create_task(
+            dashboards.async_close_session(self.hass, self._entry.entry_id),
+            name="bravia_tv_dashboard_session_end",
+        )
+        return None
 
     @callback
     def _maybe_send_dashboard_token(self) -> None:
-        """The dashboard page asked for a token: send a fresh one (once)."""
+        """The dashboard page asked for a token: send a fresh one (once).
+
+        Only for a dashboard this integration opened and that is still
+        showing. The request arrives from the far end of the agent link; a
+        token is a Home Assistant credential, so the link asking is not
+        enough to get one."""
         block = self._state.get(agent_path("dashboard"))
-        if not isinstance(block, dict) or not block.get("token_needed"):
+        if not isinstance(block, dict):
+            return
+        session = self._dashboard_session_current(block)
+        if not block.get("token_needed"):
+            return
+        if session is None:
+            if not self._dashboard_refusal_logged:
+                self._dashboard_refusal_logged = True
+                _LOGGER.warning(
+                    "The HA TV Agent on %s asked for a dashboard token, but no "
+                    "dashboard opened from Home Assistant is showing; none sent",
+                    self.device_name,
+                )
             return
         task = self._dashboard_token_task
         if (task is not None and not task.done()) or self.agent is None:
@@ -845,16 +1442,20 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if time.monotonic() - self._dashboard_token_sent < _DASHBOARD_TOKEN_RESEND_S:
             return
         self._dashboard_token_task = self.hass.async_create_background_task(
-            self._async_send_dashboard_token(), "bravia_tv_grpc dashboard token"
+            self._async_send_dashboard_token(session),
+            "bravia_tv_grpc dashboard token",
         )
 
-    async def _async_send_dashboard_token(self) -> None:
+    async def _async_send_dashboard_token(self, session: dict[str, Any]) -> None:
         try:
-            token, expires_in = await dashboards.async_access_token(self.hass)
+            token, expires_in = await dashboards.async_access_token(
+                self.hass,
+                interactive=dashboards.interactive_mode(session.get("mode")),
+            )
             if self.agent is not None:
                 await self.agent.async_dashboard_token(token, expires_in)
                 self._dashboard_token_sent = time.monotonic()
-        except agentmod.AgentError as err:
+        except (agentmod.AgentError, HomeAssistantError) as err:
             _LOGGER.debug("Could not send a dashboard token to the agent: %s", err)
 
     # ---- picture profiles (backup/restore for manual calibration) ----------
@@ -915,9 +1516,17 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         name = self._selected_profile
         return name if name and self._profile_fits_range(name) else None
 
-    async def async_select_picture_profile(self, name: str) -> None:
+    def _choose_profile(self, name: str | None) -> None:
         self._selected_profile = name
+        choices = self.hass.data.setdefault(_DATA_PROFILE_CHOICE, {})
+        if name is None:
+            choices.pop(self._entry.entry_id, None)
+        else:
+            choices[self._entry.entry_id] = name
         self._reset_restore_target()
+
+    async def async_select_picture_profile(self, name: str) -> None:
+        self._choose_profile(name)
         self.async_set_updated_data(dict(self._state))
 
     # The restore target ("Restore to picture mode")
@@ -1048,9 +1657,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _refresh_profile_names(self) -> None:
         await self._load_profiles()
         if self._selected_profile not in self._profile_names:
-            visible = self.picture_profile_names
-            self._selected_profile = visible[0] if visible else None
-            self._reset_restore_target()
+            # The chosen profile is gone (deleted, or its file removed): no
+            # other one takes its place on its own.
+            self._choose_profile(None)
         # Keep the signature current so our own write doesn't look like an
         # external change on the next scan tick.
         self._profiles_signature = await self._picture_profiles.async_signature()
@@ -1066,10 +1675,49 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def selected_picture_profile_details(self) -> dict[str, Any] | None:
-        """Metadata of the selected profile (for the select's attributes)."""
-        if not self._selected_profile:
+        """Metadata of the selected profile (for the select's attributes):
+        the one the select shows, so none while it is hidden by the range."""
+        name = self.selected_picture_profile
+        return self._profile_meta.get(name) if name else None
+
+    async def _async_fresh_picture_targets(self) -> None:
+        """Have the agent read the picture settings again before they are
+        captured.
+
+        What Home Assistant holds is the agent's last read, up to a poll
+        interval old: a backup taken right after adjusting the picture with
+        the remote would otherwise store the values from before. Best effort:
+        if the agent cannot be asked, the last read is used."""
+        agent = self.agent
+        if agent is None:
+            return
+        self._agent_document_event.clear()
+        try:
+            await agent.async_picture_refresh()
+        except agentmod.AgentError as err:
+            _LOGGER.debug("picture refresh before a capture: %s", err)
+            return
+        try:
+            async with asyncio.timeout(_PICTURE_FRESH_WAIT):
+                await self._agent_document_event.wait()
+        except TimeoutError:
+            pass  # no event: nothing changed since the last read
+
+    def _snapshot_profile(self) -> dict[str, Any] | None:
+        """The TV's current picture settings as a profile document, or None
+        when there are none to capture."""
+        mode, settings = self._capture_current_picture()
+        if not settings:
             return None
-        return self._profile_meta.get(self._selected_profile)
+        return {
+            "created": dt_util.utcnow().isoformat(),
+            "picture_mode": mode,
+            "hdr_class": self._current_hdr_class(),
+            # Recorded so a shared profile says which TV model it came from.
+            "model": self.config_entry.data.get(CONF_MODEL),
+            "model_id": self.config_entry.data.get(CONF_MODEL_ID),
+            "settings": settings,
+        }
 
     async def async_save_picture_profile(self, name: str) -> dict:
         """Snapshot the current picture settings as a named profile."""
@@ -1086,28 +1734,19 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 translation_key="picture_rest_unavailable",
                 translation_placeholders={"name": self.device_name},
             )
-        mode, settings = self._capture_current_picture()
-        if not settings:
+        await self._async_fresh_picture_targets()
+        profile = self._snapshot_profile()
+        if profile is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="picture_rest_unavailable",
                 translation_placeholders={"name": self.device_name},
             )
-        hdr_class = self._current_hdr_class()
-        model = self.config_entry.data.get(CONF_MODEL)
-        profile = {
-            "created": dt_util.utcnow().isoformat(),
-            "picture_mode": mode,
-            "hdr_class": hdr_class,
-            # Recorded so a shared profile says which TV model it came from.
-            "model": model,
-            "model_id": self.config_entry.data.get(CONF_MODEL_ID),
-            "settings": settings,
-        }
+        mode, hdr_class = profile["picture_mode"], profile["hdr_class"]
+        model, settings = profile["model"], profile["settings"]
         await self._picture_profiles.put(name, profile)
-        self._selected_profile = name
         await self._refresh_profile_names()
-        self._reset_restore_target()
+        self._choose_profile(name)
         self.async_set_updated_data(dict(self._state))
         return {
             "name": name,
@@ -1166,10 +1805,24 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         saved_mode = profile.get("picture_mode")
         mode = target_mode or saved_mode
+        offered = self.restore_mode_candidates()
+        if mode and offered and mode not in offered:
+            # Say so before anything is written, not as a failed write after.
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="picture_mode_unavailable",
+                translation_placeholders={"name": self.device_name, "mode": mode},
+            )
         stored = profile.get("settings", {})
+        backup: str | None = None
         try:
             if mode:
                 await agent.async_set_picture(picture_profiles.MODE_TARGET, mode)
+            # A restore overwrites the mode's settings for good. Keep what
+            # was there, so one press of Restore can be taken back: the
+            # values of the mode about to be written, read afresh now that
+            # the TV is in it.
+            backup = await self._async_backup_before_restore(name)
             # Brightness is gRPC-owned: write it over gRPC, not the REST batch
             # (the REST brightness mirror is unreliable). Everything else is a
             # REST target.
@@ -1180,6 +1833,18 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 and t not in picture_profiles.PROFILE_EXCLUDED
             ]
             result = await self._restore_write(agent, settings)
+        except agentmod.AgentRequestError as err:
+            # The agent answered, with a refusal: say which, instead of
+            # calling it offline.
+            key = {
+                "rest_unauthorized": "rest_key_rejected",
+                "rest_unavailable": "rest_unavailable",
+            }.get(err.code, "picture_write_refused")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key=key,
+                translation_placeholders={"name": self.device_name, "code": err.code},
+            ) from err
         except agentmod.AgentError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -1232,8 +1897,34 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "failed": failed,
             "auto_luminance_on": auto_on,
             "ambient_reset": ambient_reset,
+            # The profile holding what the restore overwrote (None when the
+            # previous settings could not be read).
+            "backup": backup,
             "results": result.get("results"),
         }
+
+    async def _async_backup_before_restore(self, restoring: str) -> str | None:
+        """Save the settings a restore is about to overwrite as the "Before
+        last restore" profile; returns its name, or None if they could not be
+        read. Restoring that profile swaps the two, so it undoes and redoes.
+        Never fails the restore."""
+        await self._async_fresh_picture_targets()
+        profile = self._snapshot_profile()
+        if profile is None:
+            _LOGGER.warning(
+                "Could not read %s's current picture settings to back them up "
+                "before restoring %s",
+                self.device_name,
+                restoring,
+            )
+            return None
+        try:
+            await self._picture_profiles.put(picture_profiles.BACKUP_NAME, profile)
+        except OSError as err:
+            _LOGGER.warning("Could not write the pre-restore backup: %s", err)
+            return None
+        await self._refresh_profile_names()
+        return picture_profiles.BACKUP_NAME
 
     async def _restore_write(self, agent, settings: list[dict]) -> dict:
         """Write a profile's REST settings, preferring the agent's batch endpoint
@@ -1309,6 +2000,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         a = profile.get("settings", {})
         if other is None:
+            await self._async_fresh_picture_targets()
             _, b = self._capture_current_picture()
             other_label = "current"
         else:
@@ -1548,6 +2240,26 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ],
             )
         else:
+            # Without the cloud link the app is launched bare. An agent
+            # from 0.10 on opens its permission screens for a bare launch
+            # only when it was told just before that this is what the launch
+            # is for; otherwise the launch shows nothing. Telling it takes
+            # the pairing, so without one there is no point in launching.
+            if (self.agent_info.get("pairing") or {}).get("method") == "compare":
+                if self.agent is None or not self._state.get(AGENT_ONLINE):
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="agent_offline",
+                        translation_placeholders={"name": self.device_name},
+                    )
+                try:
+                    await self.agent.async_arm_setup()
+                except agentmod.AgentError as err:
+                    raise HomeAssistantError(
+                        translation_domain=DOMAIN,
+                        translation_key="agent_offline",
+                        translation_placeholders={"name": self.device_name},
+                    ) from err
             await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
 
     def _set_agent_online(self, online: bool) -> None:
@@ -1565,27 +2277,42 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._state[agent_path(block)] = value
         self._state[agent_path("updated_at")] = dt_util.utcnow()
         self._state[AGENT_ONLINE] = True
+        self._agent_document_event.set()
         self._update_rest_issues()
         self._maybe_send_dashboard_token()
         self.async_set_updated_data(dict(self._state))
 
     async def _async_agent_loop(self) -> None:
-        """Keep the agent's event stream open; poll, pair and back off as needed."""
+        """Keep the agent's event stream open; poll, pair and back off as needed.
+
+        Runs for the life of the entry: whatever goes wrong inside is logged
+        and retried, so the link can never end quietly and leave the agent's
+        entities frozen on their last values."""
         assert self.agent is not None
         client = self.agent
         backoff = 5
         while True:
-            if self._state.get("power") is False:
+            if self.offline or self._state.get("power") is False:
                 # The TV drops off the LAN in standby; nothing to read.
                 self._set_agent_online(False)
                 await asyncio.sleep(15)
                 continue
             try:
+                if not client.pinned:
+                    # First contact (or a pairing the user just confirmed):
+                    # learn the certificate and hold the agent to it before
+                    # anything that matters is sent.
+                    await self._async_agent_learn_certificate(
+                        client, persist=bool(client.token)
+                    )
                 if not client.token and not await self._async_agent_pair():
-                    await asyncio.sleep(60)
+                    # Until the user pairs it (which wakes this), or to try
+                    # an older agent again.
+                    await self._async_agent_wait(60)
                     continue
                 self._apply_agent_document(await client.async_state())
-                await self._async_pin_agent_certificate()
+                self._clear_agent_identity_issue()
+                self._clear_agent_pairing_issue()
                 await self.async_agent_refresh_info()
                 await self._async_agent_sync_rest()
                 backoff = 5
@@ -1597,108 +2324,334 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._set_agent_online(False)
                 client.token = None
                 await asyncio.sleep(5)
-            except agentmod.AgentFingerprintMismatch:
-                _LOGGER.info("HA TV Agent certificate changed; re-pairing")
+            except agentmod.AgentFingerprintMismatch as err:
+                # A different certificate on the agent's port. Pairing with it
+                # is the user's decision, never ours: until they confirm, it
+                # gets no token, no IP-control key and no dashboard token.
                 self._set_agent_online(False)
-                await self._async_unpin_agent(client)
-                await asyncio.sleep(5)
+                self._raise_agent_identity_issue(err.got)
+                await self._async_agent_wait(_AGENT_IDENTITY_RECHECK)
             except agentmod.AgentError as err:
                 _LOGGER.debug("HA TV Agent link lost: %s", err)
                 self._set_agent_online(False)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _AGENT_BACKOFF_MAX)
+            except Exception:  # noqa: BLE001 - the loop must outlive any error
+                _LOGGER.exception("HA TV Agent link failed unexpectedly; retrying")
+                self._set_agent_online(False)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, _AGENT_BACKOFF_MAX)
 
-    async def _async_pin_agent_certificate(self) -> None:
-        """Pin the certificate behind an authenticated conversation when none
-        is pinned yet (just paired, or a token from before the agent served
-        TLS). From then on the handshake itself rejects any other."""
-        client = self.agent
-        if client is None or client.pinned or not client.seen_cert:
-            return
-        cert = client.seen_cert
-        client.pin(
-            cert,
-            await self.hass.async_add_executor_job(agentmod.make_ssl_context, cert),
-        )
-        self.hass.config_entries.async_update_entry(
-            self._entry,
-            data={
-                **self._entry.data,
-                CONF_AGENT_CERT: agentmod.encode_cert(cert),
-                CONF_AGENT_FINGERPRINT: agentmod.fingerprint_of(cert),
-            },
-        )
-        _LOGGER.info(
-            "pinned the HA TV Agent certificate %s…",
-            agentmod.fingerprint_of(cert)[:16],
-        )
+    async def _async_agent_wait(self, seconds: float) -> None:
+        """Sleep, unless woken early (the user confirmed a new certificate)."""
+        try:
+            async with asyncio.timeout(seconds):
+                await self._agent_wake.wait()
+        except TimeoutError:
+            pass
+        self._agent_wake.clear()
+
+    async def _async_agent_learn_certificate(
+        self, client: agentmod.AgentClient, *, persist: bool
+    ) -> None:
+        """Read the certificate the agent presents and pin it.
+
+        Trust on first use: this runs only while no certificate is pinned, at
+        first contact or after the user confirmed a changed one. From then on
+        the TLS handshake itself refuses any other certificate. ``persist``
+        stores the pin at once (a token from before pins existed); a first
+        pairing stores it together with the token it obtains."""
+        fingerprint = await client.async_fetch_fingerprint()
+        client.pin(fingerprint)
+        _LOGGER.info("pinned the HA TV Agent certificate %s…", fingerprint[:16])
+        if persist:
+            self._async_store_agent_pairing(client.token, fingerprint)
+
+    @callback
+    def _async_store_agent_pairing(self, token: str | None, fingerprint: str) -> None:
+        data = {k: v for k, v in self._entry.data.items() if k != CONF_AGENT_CERT}
+        data[CONF_AGENT_FINGERPRINT] = fingerprint
+        if token:
+            data[CONF_AGENT_TOKEN] = token
+        self.hass.config_entries.async_update_entry(self._entry, data=data)
 
     async def _async_agent_pair(self) -> bool:
-        """Obtain a bearer token from the agent and persist it.
+        """Get paired, if that can happen without the user; else ask for them.
 
-        Launch the agent through the gRPC app launch, which opens its 60 s
-        pairing window, and POST /v1/pair until it answers; the token only
-        ever travels over the TLS connection. (Pairing through the Sony cloud
-        deep link was removed: it needs the same LAN path to verify the token,
-        so it never helped when this fails, and it sent the token through
-        Sony's service and into the TV's system log.) Rate-limited so a broken
-        agent cannot keep launching itself on the TV.
+        An agent from 0.10 on pairs only with someone at the TV, who compares
+        a code and allows the request with the remote. That cannot be started
+        behind the user's back, so it is a repair they run when they are at
+        the TV (:meth:`async_agent_pair_start`). Agents before that are paired
+        with as they always were: launch the app, take the token.
+
+        (Pairing through the Sony cloud deep link was removed long ago: it
+        sent the token through Sony's service and into the TV's system log.)
         """
         assert self.agent is not None
         client = self.agent
+        method = ((await client.async_info()).get("pairing") or {}).get("method")
+        if method == "compare":
+            self._raise_agent_pairing_issue()
+            return False
+        if method is not None:
+            _LOGGER.warning(
+                "The HA TV Agent on %s pairs in a way this version of the "
+                "integration does not know (%s); update the integration",
+                client.host,
+                method,
+            )
+            return False
+        # Rate-limited so a broken agent cannot keep launching itself on the TV.
         now = dt_util.utcnow()
         if self._agent_last_pair and now - self._agent_last_pair < _AGENT_PAIR_RETRY:
             return False
         self._agent_last_pair = now
-        # Pairing means the previous relationship is over: any pinned
-        # certificate belongs to that earlier life and would make the
-        # verification of a newly paired token fail for the wrong reason.
-        if client.pinned:
-            await self._async_unpin_agent(client)
-        token = await self._async_agent_pair_local(client)
-        if token is None:
+        token = await self._async_agent_pair_window(client)
+        if token is None or not client.fingerprint:
             client.token = None
             return False
-        # Pin the certificate the pairing conversation ran over: from here on
-        # the agent must present exactly this one.
-        self.hass.config_entries.async_update_entry(
-            self._entry, data={**self._entry.data, CONF_AGENT_TOKEN: token}
-        )
-        await self._async_pin_agent_certificate()
-        _LOGGER.info("paired with the HA TV Agent")
+        self._async_agent_paired(token, client.fingerprint)
         return True
 
-    async def _async_agent_pair_local(self, client: agentmod.AgentClient) -> str | None:
-        """Launch the agent (opens its pairing window) and claim a token."""
+    @callback
+    def _async_agent_paired(self, token: str, fingerprint: str) -> None:
+        self._async_store_agent_pairing(token, fingerprint)
+        self._clear_agent_pairing_issue()
+        _LOGGER.info("paired with the HA TV Agent")
+        self._agent_wake.set()
+
+    async def _async_agent_launch(self) -> bool:
         try:
             await self.async_set_field(_AGENT_APP_PATH, agentmod.AGENT_PACKAGE)
         except HomeAssistantError as err:
             _LOGGER.warning("could not launch the HA TV Agent for pairing: %s", err)
+            return False
+        return True
+
+    async def _async_agent_pair_window(
+        self, client: agentmod.AgentClient
+    ) -> str | None:
+        """Pairing with an agent from before 0.10: launching it opens a 60 s
+        window in which the first request gets the token. Ask at once and
+        often, so that nothing else gets in first."""
+        try:
+            asked = await client.async_pair_request(AGENT_CLIENT_NAME)
+        except agentmod.AgentPairingClosed:
+            asked = None
+        if isinstance(asked, str):
+            return asked  # its window happened to be open
+        if asked is not None:
+            # It took a request after all: it pairs by code.
+            self._raise_agent_pairing_issue()
+            return None
+        if not await self._async_agent_launch():
             return None
         deadline = self.hass.loop.time() + _AGENT_PAIR_WINDOW
         while self.hass.loop.time() < deadline:
-            await asyncio.sleep(2)
             try:
-                return await client.async_pair(AGENT_CLIENT_NAME)
+                asked = await client.async_pair_request(AGENT_CLIENT_NAME)
             except agentmod.AgentPairingClosed:
-                continue
+                asked = None
+            except agentmod.AgentFingerprintMismatch:
+                raise
             except agentmod.AgentError as err:
                 _LOGGER.debug("agent pair attempt failed: %s", err)
+                asked = None
+            if isinstance(asked, str):
+                return asked
+            await asyncio.sleep(_AGENT_PAIR_POLL)
         _LOGGER.warning("HA TV Agent pairing window closed without a token")
         return None
 
-    async def _async_unpin_agent(self, client: agentmod.AgentClient) -> None:
-        client.token = None
-        client.pin(
-            None,
-            await self.hass.async_add_executor_job(agentmod.make_ssl_context, None),
+    # -- pairing by code: the user runs it from the Repairs page ---------------
+
+    @property
+    def _agent_pairing_issue_id(self) -> str:
+        return f"agent_pairing_{self._entry.entry_id}"
+
+    @callback
+    def _raise_agent_pairing_issue(self) -> None:
+        """A repair that walks the user through pairing: it needs them at the
+        TV, so it waits until they start it."""
+        if self._agent_pairing_reported:
+            return
+        self._agent_pairing_reported = True
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._agent_pairing_issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="agent_pairing",
+            translation_placeholders={"name": self.device_name},
+            data={"entry_id": self._entry.entry_id, "name": self.device_name},
         )
+
+    @callback
+    def _clear_agent_pairing_issue(self) -> None:
+        if not self._agent_pairing_reported:
+            return
+        self._agent_pairing_reported = False
+        ir.async_delete_issue(self.hass, DOMAIN, self._agent_pairing_issue_id)
+
+    async def async_agent_pairs_by_code(self) -> bool:
+        """Whether the agent pairs by a code the user compares (0.10 and
+        later). False when it cannot be asked."""
+        if self.agent is None:
+            return False
+        try:
+            info = await self.agent.async_info()
+        except agentmod.AgentError:
+            return False
+        return (info.get("pairing") or {}).get("method") == "compare"
+
+    async def async_agent_pair_start(self) -> str:
+        """Ask the agent to pair and bring its question up on the TV. Returns
+        the code the TV must be showing for the user to allow it there.
+
+        The token is collected in the background as soon as the viewer has
+        allowed the request (:meth:`async_agent_pair_outcome` tells how it
+        went). Raises :class:`agentmod.AgentPairingBusy` when the agent is
+        not taking a request right now, and :class:`agentmod.AgentError` when
+        it cannot be reached.
+        """
+        client = self.agent
+        if client is None or self.offline or self._state.get("power") is False:
+            raise agentmod.AgentError("the TV is off, or its agent was not found")
+        self._async_agent_pair_stop()
+        if not client.pinned:
+            await self._async_agent_learn_certificate(client, persist=False)
+        asked = await client.async_pair_request(AGENT_CLIENT_NAME)
+        if isinstance(asked, str):
+            # An agent from before 0.10 whose window was open: paired.
+            if client.fingerprint:
+                self._async_agent_paired(asked, client.fingerprint)
+            self._agent_pair_outcome = "paired"
+            return ""
+        code = await client.async_pair_reveal(asked)
+        self._agent_pair_outcome = None
+        self._agent_pair_task = self._entry.async_create_background_task(
+            self.hass,
+            self._async_agent_pair_collect(client, asked),
+            name="bravia_tv_agent_pair",
+        )
+        # The agent asks the viewer whenever its screen is open. Opening it
+        # is a convenience: if it fails, the user can open the app by hand.
+        await self._async_agent_launch()
+        return code
+
+    async def _async_agent_pair_collect(
+        self, client: agentmod.AgentClient, asked: agentmod.AgentPairRequest
+    ) -> None:
+        """Wait for the viewer's answer; store the token when it is yes."""
+        outcome = "lapsed"
+        deadline = self.hass.loop.time() + _AGENT_PAIR_PATIENCE
+        try:
+            while self.hass.loop.time() < deadline:
+                try:
+                    token = await client.async_pair_collect(asked.request_id)
+                except agentmod.AgentPairingDenied:
+                    outcome = "denied"
+                    break
+                except agentmod.AgentPairingClosed:
+                    break
+                except agentmod.AgentFingerprintMismatch:
+                    outcome = "failed"
+                    break
+                except agentmod.AgentError as err:
+                    _LOGGER.debug("agent pair attempt failed: %s", err)
+                    token = None
+                if token is not None:
+                    if client.fingerprint:
+                        self._async_agent_paired(token, client.fingerprint)
+                        outcome = "paired"
+                    else:
+                        client.token = None
+                        outcome = "failed"
+                    break
+                await asyncio.sleep(_AGENT_PAIR_POLL)
+        finally:
+            self._agent_pair_outcome = outcome
+        if outcome != "paired":
+            _LOGGER.warning(
+                "Pairing with the HA TV Agent on %s did not complete: %s",
+                client.host,
+                outcome,
+            )
+
+    async def async_agent_pair_outcome(self, wait: float = 0) -> str | None:
+        """How the pairing started last went: ``paired``, ``denied``,
+        ``lapsed`` or ``failed``; None while the viewer has not answered
+        (after waiting up to ``wait`` seconds for it)."""
+        task = self._agent_pair_task
+        if task is not None and not task.done() and wait > 0:
+            await asyncio.wait({task}, timeout=wait)
+        return self._agent_pair_outcome
+
+    @callback
+    def _async_agent_pair_stop(self) -> None:
+        task, self._agent_pair_task = self._agent_pair_task, None
+        if task is not None and not task.done():
+            task.cancel()
+
+    # -- a changed agent certificate: the user decides -------------------------
+
+    @property
+    def _agent_identity_issue_id(self) -> str:
+        return f"agent_identity_changed_{self._entry.entry_id}"
+
+    @callback
+    def _raise_agent_identity_issue(self, got: str | None) -> None:
+        """A repair the user confirms before the integration pairs with an
+        agent that presents another certificate than the pinned one."""
+        shown = " ".join(got[i : i + 4] for i in range(0, 16, 4)) if got else "unknown"
+        if self._agent_identity_reported == shown:
+            return
+        self._agent_identity_reported = shown
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._agent_identity_issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="agent_identity_changed",
+            translation_placeholders={
+                "name": self.device_name,
+                "fingerprint": shown,
+            },
+            data={
+                "entry_id": self._entry.entry_id,
+                "name": self.device_name,
+                "fingerprint": shown,
+            },
+        )
+
+    @callback
+    def _clear_agent_identity_issue(self) -> None:
+        if self._agent_identity_reported is None:
+            return
+        self._agent_identity_reported = None
+        ir.async_delete_issue(self.hass, DOMAIN, self._agent_identity_issue_id)
+
+    async def async_agent_accept_new_identity(self) -> None:
+        """The user confirmed that the agent was reinstalled: forget the old
+        certificate and token, and pair afresh with the one presented now."""
+        client = self.agent
+        if client is None:
+            return
+        _LOGGER.info("Pairing again with the HA TV Agent, as confirmed by the user")
+        client.token = None
+        client.pin(None)
+        self._agent_last_pair = None
+        self._rest_psk_sent = False
         data = {
             k: v
             for k, v in self._entry.data.items()
             if k not in (CONF_AGENT_TOKEN, CONF_AGENT_CERT, CONF_AGENT_FINGERPRINT)
         }
         self.hass.config_entries.async_update_entry(self._entry, data=data)
+        self._clear_agent_identity_issue()
+        self._agent_wake.set()
 
     async def async_get_agent_artwork(self) -> bytes | None:
         """Now-playing artwork from the agent, or None."""
@@ -1729,6 +2682,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         finally:
             self._app_list_refreshing = False
+        apps = [app for app in apps or [] if isinstance(app, dict)]
         if apps and apps != self._app_list:
             self._app_list = apps
             # Drop cached icons for apps/URIs no longer present (uninstalled or
@@ -1805,16 +2759,11 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return _SYSTEM_APP_LABELS.get(package, package)
 
     def _on_connection_lost(self) -> None:
-        """Notify-thread entrypoint: the stream died (likely a TV reboot onto a
-        new port). Reload the entry to re-discover the port and refresh keys."""
-        self.hass.loop.call_soon_threadsafe(self._schedule_reload)
-
-    @callback
-    def _schedule_reload(self) -> None:
-        _LOGGER.warning("Bravia TV push connection lost; reloading to reconnect")
-        # Entities go unavailable immediately while the reload reconnects.
-        self.async_set_update_error(UpdateFailed("Bravia TV push connection lost"))
-        self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
+        """Notify-thread entrypoint: the stream died and could not be
+        re-established (the TV went to standby, or rebooted onto a new port)."""
+        self.hass.loop.call_soon_threadsafe(
+            self._async_connection_lost, "push stream lost"
+        )
 
     def _on_reconnect(self) -> None:
         """Notify-thread entrypoint: the push stream re-subscribed after a drop.
@@ -1839,29 +2788,24 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_periodic_refresh(self, _now: Any) -> None:
         """Lightweight liveness probe (single-path read).
 
-        Push keeps state current and a reconnect reconciles it, so this no longer
-        re-reads the full state — it just confirms the connection is alive.
-        Persistent failure means the connection is dead — typically a TV reboot
-        that changed the gRPC port and invalidated the keys — so reload to
-        re-discover the port and refresh keys.
+        Push keeps state current and a reconnect reconciles it, so this does
+        not re-read the full state — it just confirms the connection is alive.
+        Two failures in a row mean it is not (a stream can hang on an
+        unreachable host without ever erroring): the coordinator goes offline
+        and the reconnect loop takes over.
         """
+        if self.offline:
+            return
         if await self._async_liveness():
             self._refresh_failures = 0
-            # Connection is back: restore entity availability if a prior failure
-            # (or a lost push stream) had marked the coordinator unsuccessful.
+            # A failure recorded by an earlier refresh no longer holds.
             if not self.last_update_success:
                 self.async_set_updated_data(dict(self._state))
             return
         self._refresh_failures += 1
-        # Reflect the dead connection on entities now (unavailable) rather than
-        # letting them show stale state until the reload below.
-        self.async_set_update_error(UpdateFailed("Bravia TV liveness probe failed"))
         if self._refresh_failures >= 2:
             self._refresh_failures = 0
-            _LOGGER.warning(
-                "Bravia TV unreachable; reloading to re-discover port and keys"
-            )
-            self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
+            self._async_connection_lost("liveness probe failed")
 
     async def _async_update_data(self) -> dict[str, Any]:
         """On-demand refresh (``homeassistant.update_entity``, "Check for updates").
@@ -1875,15 +2819,17 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return dict(self._state)
 
     async def _async_liveness(self) -> bool:
-        """Cheap single-path GetStates to confirm the connection is alive."""
+        """Cheap single-path GetStates to confirm the connection is alive.
+
+        Alive means the TV answered. What it answered is not judged: a reply
+        this client cannot decode is a decoding problem, and tearing the
+        connection down over it would only loop."""
         try:
-            states = await self.hass.async_add_executor_job(
-                self.client.get_states, ["power"]
-            )
+            await self.hass.async_add_executor_job(self.client.get_states, ["power"])
         except Exception:  # noqa: BLE001
             _LOGGER.debug("liveness probe failed", exc_info=True)
             return False
-        return bool(states)
+        return True
 
     async def _seed_from_device(self) -> bool:
         """Seed all fields from a single bulk GetStates read. True on success."""
@@ -1938,6 +2884,19 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         response = await cred.async_refresh_access_token(session, refresh_token)
         self._cloud_token = response["access_token"]
         self._cloud_token_expires_at = now + int(response.get("expires_in") or 3600)
+        rotated = response.get("refresh_token")
+        if isinstance(rotated, str) and rotated and rotated != refresh_token:
+            # Sony issued a new refresh token with this one: the old one may
+            # stop working, so the new one must be what is stored.
+            self.hass.config_entries.async_update_entry(
+                self._entry,
+                data={
+                    **self._entry.data,
+                    CONF_GRPC_KEYS: cred.credentials_to_json(
+                        {**creds, "refresh_token": rotated}
+                    ),
+                },
+            )
         return self._cloud_token
 
     async def _async_load_cloud(self, *, seed_local: bool) -> None:
@@ -1946,7 +2905,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Fills ``cloud_capabilities`` (which gates the cloud-backed entities),
         seeds the ``cloud.*`` states and, when ``seed_local`` is set, the local
         paths the cloud also reports. Never raises: the local plane is fully
-        usable without the cloud.
+        usable without the cloud. When Sony cannot be reached the capabilities
+        seen last time are used, so the cloud-backed entities stay, and the
+        load is repeated by the cloud poll until it works.
         """
         creds = self._cloud_credentials()
         if not creds:
@@ -1964,16 +2925,20 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 device = next(
                     (d for d in devices if d.get("device_id") == device_id), None
                 )
-                if device is not None:
-                    self.cloud_capabilities = cloud.capabilities_from_device(device)
-                    self.cloud_values = {
-                        name: cloud.capability_values(device, name)
-                        for name in self.cloud_capabilities
-                    }
                 snapshot = await cred.async_get_device_states(session, device_id, token)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Sony cloud unavailable at startup", exc_info=True)
+            self._cloud_loaded = False
+            self._restore_cloud_capabilities()
             return
+        self._cloud_loaded = True
+        if device is not None:
+            self.cloud_capabilities = cloud.capabilities_from_device(device)
+            self.cloud_values = {
+                name: cloud.capability_values(device, name)
+                for name in self.cloud_capabilities
+            }
+            await self._async_remember_cloud_capabilities()
         caps = self.client.capabilities
         for item in snapshot.get("states", []):
             name = item.get("name")
@@ -2001,8 +2966,54 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             len(snapshot.get("states", [])),
         )
 
+    def _restore_cloud_capabilities(self) -> None:
+        """Use the cloud capabilities stored at the last successful load."""
+        stored = (self._cache_data or {}).get("cloud")
+        if not isinstance(stored, dict):
+            return
+        caps, values = stored.get("capabilities"), stored.get("values")
+        if not isinstance(caps, dict):
+            return
+        self.cloud_capabilities = {
+            str(name): tuple(c for c in commands if isinstance(c, str))
+            for name, commands in caps.items()
+            if isinstance(commands, list)
+        }
+        self.cloud_values = {
+            str(name): tuple(v for v in vals if isinstance(v, str))
+            for name, vals in (values if isinstance(values, dict) else {}).items()
+            if isinstance(vals, list)
+        }
+
+    async def _async_remember_cloud_capabilities(self) -> None:
+        if self._cache_data is None:
+            return
+        stored = {
+            "capabilities": {k: list(v) for k, v in self.cloud_capabilities.items()},
+            "values": {k: list(v) for k, v in self.cloud_values.items()},
+        }
+        if self._cache_data.get("cloud") != stored:
+            self._cache_data["cloud"] = stored
+            await self._cache.async_save(self._cache_data)
+
     async def _async_cloud_poll(self, _now: Any = None) -> None:
         """Mirror the cloud-only states from the TV's cloud snapshot."""
+        if not self._cloud_loaded:
+            # Sony was unreachable at start-up: load the capabilities now. If
+            # they are not what the entities were built from (the first time
+            # they were ever seen), set the entry up afresh so those exist.
+            await self._async_load_cloud(seed_local=False)
+            if not self._cloud_loaded:
+                return
+            if self.cloud_capabilities != self._entity_cloud:
+                _LOGGER.info(
+                    "Sony cloud reachable again for %s; reloading for its controls",
+                    self._entry.title,
+                )
+                self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
+                return
+            self.async_set_updated_data(dict(self._state))
+            return
         creds = self._cloud_credentials()
         device_id = self._cloud_device_id(creds) if creds else None
         if not device_id:
@@ -2033,7 +3044,9 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Used to confirm a write whose effect is not pushed reliably (e.g. an
         audio-output switch, where ``activation_result`` reports the outcome).
         """
-        states = await self.hass.async_add_executor_job(self.client.get_states, paths)
+        states = await self._async_tv_call(
+            ", ".join(paths), self.client.get_states, paths
+        )
         if states:
             self._state.update(states)
             self.async_set_updated_data(dict(self._state))
@@ -2042,19 +3055,28 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_turn_on_power(self) -> None:
         """Power on: local gRPC first, Sony cloud as the standby fallback.
 
-        A TV in deep standby may not answer on the local plane, but its Seeds
+        A TV in deep standby does not answer on the local plane, but its Seeds
         service still receives cloud commands (verified: a cloud ``power`` set
-        wakes the TV). Fall back to that when the local write fails.
+        wakes the TV). Fall back to that when the local write fails, and go
+        straight to it while the TV is unreachable.
         """
-        try:
-            await self.async_set_field("power", True)
-            return
-        except Exception as err:  # noqa: BLE001
-            if not self.cloud_supports("power"):
-                raise
-            _LOGGER.info("local power-on failed (%s); trying the Sony cloud", err)
+        if not self.offline:
+            try:
+                await self.async_set_field("power", True)
+                return
+            except Exception as err:  # noqa: BLE001
+                if not self.cloud_supports("power"):
+                    raise
+                _LOGGER.info("local power-on failed (%s); trying the Sony cloud", err)
+        elif not self.cloud_supports("power"):
+            raise self._tv_unreachable()
         await self.async_cloud_command("power", [cloud.set_command("power", True)])
-        self._apply_delta("power", True)
+        if self.offline:
+            # The TV needs a moment to bring its network up; look for it now
+            # instead of at the next interval. Its own report sets the state.
+            self.async_request_reconnect()
+        else:
+            self._apply_delta("power", True)
 
     def cloud_supports(self, name: str, command: str = "set") -> bool:
         """Whether the TV advertised ``command`` for cloud capability ``name``."""
@@ -2106,19 +3128,20 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         session = async_get_clientsession(self.hass)
         async with self._cloud_lock:
             try:
-                token = await self._async_cloud_token()
-                try:
-                    result = await cloud.async_run_commands(
-                        session, device_id, token, commands
-                    )
-                except cloud.CloudCommandError as err:
-                    if err.status not in (401, 403):
-                        raise
-                    # Access token no longer accepted: refresh once and retry.
-                    token = await self._async_cloud_token(force=True)
-                    result = await cloud.async_run_commands(
-                        session, device_id, token, commands
-                    )
+                async with asyncio.timeout(_CLOUD_COMMAND_TIMEOUT):
+                    token = await self._async_cloud_token()
+                    try:
+                        result = await cloud.async_run_commands(
+                            session, device_id, token, commands
+                        )
+                    except cloud.CloudCommandError as err:
+                        if err.status not in (401, 403):
+                            raise
+                        # Access token no longer accepted: refresh once, retry.
+                        token = await self._async_cloud_token(force=True)
+                        result = await cloud.async_run_commands(
+                            session, device_id, token, commands
+                        )
             except cloud.CloudCommandError as err:
                 if err.result is not None and not isinstance(
                     err, cloud.CloudCommandTimeout
@@ -2138,11 +3161,23 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     translation_key="cloud_unreachable",
                     translation_placeholders={"name": name, "reason": str(err)},
                 ) from err
-            except (cred.GrpcCredentialsError, cred.GrpcCredentialsRefreshError) as err:
+            except (
+                cred.GrpcCredentialsError,
+                cred.GrpcCredentialsRefreshError,
+                aiohttp.ClientError,
+                TimeoutError,
+                OSError,
+            ) as err:
+                # No internet, DNS, a reset connection, Sony not answering in
+                # time: all the same thing to the user.
+                _LOGGER.warning("cloud command %s failed: %r", name, err)
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
                     translation_key="cloud_unreachable",
-                    translation_placeholders={"name": name, "reason": str(err)},
+                    translation_placeholders={
+                        "name": name,
+                        "reason": str(err) or type(err).__name__,
+                    },
                 ) from err
         for state_name, value in cloud.reported_states(result).items():
             self._state[cloud_path(state_name)] = value
@@ -2189,15 +3224,39 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Notify-thread entrypoint: hop to the event loop before touching state."""
         self.hass.loop.call_soon_threadsafe(self._apply_delta, path, value)
 
+    def _tv_unreachable(self) -> HomeAssistantError:
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="tv_unreachable",
+            translation_placeholders={"name": self.device_name},
+        )
+
+    async def _async_tv_call(self, path: str, func: Any, *args: Any) -> Any:
+        """Run a blocking client call; failures become translated errors.
+
+        No answer from the TV says it is unreachable. An error status from it
+        says it refused: the same message as a write it answered "no" to."""
+        if self.offline:
+            raise self._tv_unreachable()
+        try:
+            return await self.hass.async_add_executor_job(func, *args)
+        except BraviaTvConnectionError as err:
+            raise self._tv_unreachable() from err
+        except BraviaTvError as err:
+            _LOGGER.warning("The TV refused the request for %s: %s", path, err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="exec_rejected",
+                translation_placeholders={"path": path},
+            ) from err
+
     async def async_set_field(self, path: str, value: Any) -> None:
         """Send an ExecCommand and optimistically reflect the new value.
 
         Raises HomeAssistantError if the TV rejects the write, so the failure
         surfaces to the user instead of silently reverting on the next push.
         """
-        ok = await self.hass.async_add_executor_job(
-            self.client.exec_command, path, value
-        )
+        ok = await self._async_tv_call(path, self.client.exec_command, path, value)
         if not ok:
             _LOGGER.warning("ExecCommand for %s=%s was rejected", path, value)
             raise HomeAssistantError(
@@ -2213,14 +3272,16 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Unlike ``async_set_field`` these paths are not readable state, so nothing
         is stored; only the ExecCommand is sent. Returns whether it was accepted.
         """
-        ok = await self.hass.async_add_executor_job(
-            self.client.exec_command, path, value
-        )
+        ok = await self._async_tv_call(path, self.client.exec_command, path, value)
         if not ok:
             _LOGGER.warning("Remote command %s=%s was rejected", path, value)
         return ok
 
     async def async_shutdown(self) -> None:
+        self._shutting_down = True
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
         if self._cancel_profile_scan is not None:
             self._cancel_profile_scan()
             self._cancel_profile_scan = None
@@ -2239,6 +3300,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._agent_task is not None:
             self._agent_task.cancel()
             self._agent_task = None
+        self._async_agent_pair_stop()
         if self._cancel_refresh is not None:
             self._cancel_refresh()
             self._cancel_refresh = None

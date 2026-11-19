@@ -37,13 +37,20 @@ def encode_signed_varint(value: int) -> bytes:
     return bytes(out)
 
 
+# A protobuf varint is at most 10 bytes (64 bits, 7 per byte).
+_MAX_VARINT_BYTES = 10
+
+
 def read_varint(data: bytes, pos: int) -> tuple[int, int]:
     """Decode a varint at ``pos``; return ``(value, next_pos)``.
 
     Best-effort: a truncated varint returns the partial value rather than
-    raising (all inputs here come from the trusted device)."""
+    raising. Reading stops after ten bytes, the longest a valid varint can be,
+    so a run of continuation bytes costs a bounded amount of work instead of
+    building an ever larger integer."""
     value = shift = 0
-    while pos < len(data):
+    end = min(len(data), pos + _MAX_VARINT_BYTES)
+    while pos < end:
         byte = data[pos]
         pos += 1
         value |= (byte & 0x7F) << shift
@@ -76,9 +83,9 @@ def decode_field(data: bytes, pos: int) -> tuple[tuple[int, int, Any] | None, in
         length, pos = read_varint(data, pos)
         if pos + length > len(data):
             return None, pos
-        value = data[pos : pos + length]
+        payload = data[pos : pos + length]
         pos += length
-        return (field_num, wire_type, value), pos
+        return (field_num, wire_type, payload), pos
     return None, pos
 
 

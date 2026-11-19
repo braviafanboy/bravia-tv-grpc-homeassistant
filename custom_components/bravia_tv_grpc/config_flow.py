@@ -14,11 +14,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
-import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -42,6 +43,7 @@ from .const import (
     CONF_PICTURE_EVENT_REFRESH,
     CONF_PICTURE_POLL_S,
     CONF_REST_PSK,
+    DATA_ADDRESS_HINTS,
     DEFAULT_AGENT_UPDATE_CHECKS,
     DEFAULT_NOTIFY_DURATION,
     DEFAULT_NOTIFY_ICON,
@@ -61,21 +63,19 @@ from .grpc.credentials import (
     credentials_to_json,
     start_oauth_login,
 )
-from .grpc_discovery import async_resolve_device_mdns, discover_grpc_port
+from .grpc.device_id import parse_instance_name, same_device
+from .grpc_discovery import async_resolve_device_mdns, scan_for_grpc_port
 
 _LOGGER = logging.getLogger(__name__)
 
-# Sony advertises `<friendly name>-<40-hex device_unique_id>._sonysmarthome…`.
-_DEVICE_UID_RE = re.compile(r"-([0-9a-f]{40})", re.IGNORECASE)
 
-
-def _parse_mdns_name(name: str) -> tuple[str | None, str | None]:
-    """Return (friendly_name, device_unique_id) from an mDNS instance name."""
-    label = (name or "").split("._sonysmarthome")[0]
-    match = _DEVICE_UID_RE.search(label)
-    if match:
-        return label[: match.start()].strip(" -") or None, match.group(1).lower()
-    return (label or None), None
+def _is_http_url(value: str) -> bool:
+    """Whether ``value`` is an absolute http(s) URL with a host."""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.netloc)
 
 
 def _is_soundbar_model(properties: dict[str, Any] | None) -> bool:
@@ -140,15 +140,18 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
         # The soundbar advertises the same service on the same account; capture
         # the device's unique id so pairing binds to the discovered device (and
         # rejects a non-TV) instead of guessing.
-        friendly, self._device_unique_id = _parse_mdns_name(discovery_info.name)
-        # An already-configured TV that reappears at a new address (new DHCP
-        # lease) is matched by its stable device_unique_id; refresh the stored
-        # host/port in place so a moved TV self-heals instead of breaking or
-        # showing up as a brand-new discovery.
+        friendly, self._device_unique_id = parse_instance_name(discovery_info.name)
+        # An already-configured TV is matched by its stable device_unique_id,
+        # so one that reappears (back from standby, on a new port after a
+        # reboot, or at a new address after a new DHCP lease) is picked up
+        # again instead of showing up as a brand-new discovery. A TV with a
+        # long name announces only the beginning of its id, hence the compare.
         if self._device_unique_id is not None:
             for entry in self._async_current_entries():
-                if entry.data.get(CONF_DEVICE_UNIQUE_ID) == self._device_unique_id:
-                    self._async_refresh_entry_address(entry, host, discovery_info.port)
+                if same_device(
+                    entry.data.get(CONF_DEVICE_UNIQUE_ID), self._device_unique_id
+                ):
+                    self._async_note_rediscovery(entry, host, discovery_info.port)
                     return self.async_abort(reason="already_configured")
         # Fallback for entries paired before the unique id was recorded.
         for entry in self._async_current_entries():
@@ -163,20 +166,29 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
         return await self.async_step_oauth()
 
     @callback
-    def _async_refresh_entry_address(
+    def _async_note_rediscovery(
         self, entry: ConfigEntry, host: str, port: int | None
     ) -> None:
-        """Update a moved TV's stored host/port in place and reload it."""
-        updates: dict[str, Any] = {}
-        if host and entry.data.get(CONF_HOST) != host:
-            updates[CONF_HOST] = host
-        if port and entry.data.get(CONF_GRPC_PORT) != port:
-            updates[CONF_GRPC_PORT] = port
-        if updates:
-            self.hass.config_entries.async_update_entry(
-                entry, data={**entry.data, **updates}
+        """Tell a configured TV's entry where mDNS just saw it.
+
+        The announcement is a hint, not a fact: anything on the network can
+        send one carrying this TV's id, which the TV broadcasts. So nothing is
+        stored here. A TV that is connected ignores it (the connection it
+        holds is the proof of where the TV is); one that is unreachable tries
+        the address at once and keeps it only if it proves to be the TV."""
+        coordinator = self.hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if coordinator is not None:
+            coordinator.async_note_discovery(host, port)
+            return
+        if entry.state is not ConfigEntryState.SETUP_RETRY:
+            return
+        # Its setup is waiting for the TV: try again now, with this address.
+        if host and port:
+            self.hass.data.setdefault(DATA_ADDRESS_HINTS, {})[entry.entry_id] = (
+                host,
+                int(port),
             )
-            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        self.hass.config_entries.async_schedule_reload(entry.entry_id)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -200,16 +212,14 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
                 if _is_soundbar_model(props):
                     return self.async_abort(reason="not_a_tv")
                 self._port = port
-                _, self._device_unique_id = _parse_mdns_name(name)
+                _, self._device_unique_id = parse_instance_name(name)
             else:
                 # mDNS blocked: scan for the port. Without a unique id, device
                 # selection falls back to the single TV on the account.
                 # The dynamic port has only been seen in the ephemeral range, so
-                # scan that first (about half the ports); fall back to full.
+                # that is scanned first, then the remaining ports.
                 self._port = await self.hass.async_add_executor_job(
-                    discover_grpc_port, self._host, (), range(32768, 61000)
-                ) or await self.hass.async_add_executor_job(
-                    discover_grpc_port, self._host, (), range(1024, 65536)
+                    scan_for_grpc_port, self._host
                 )
             if not self._port:
                 errors["base"] = "no_grpc_service"
@@ -241,7 +251,7 @@ class BraviaTvGrpcConfigFlow(ConfigFlow, domain=DOMAIN):
                 credentials = await async_complete_oauth_flow(
                     session,
                     user_input["redirect_url"],
-                    self._code_verifier,
+                    self._code_verifier or "",
                     expected_state=self._state,
                     device_id=reauth_device_id,
                     device_unique_id=self._device_unique_id,
@@ -308,8 +318,14 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the manual-port option."""
+        """Manage the options."""
+        errors: dict[str, str] = {}
+        manifest_url = ""
         if user_input is not None:
+            manifest_url = (user_input.get(CONF_AGENT_MANIFEST_URL) or "").strip()
+            if manifest_url and not _is_http_url(manifest_url):
+                errors[CONF_AGENT_MANIFEST_URL] = "invalid_url"
+        if user_input is not None and not errors:
             return self.async_create_entry(
                 data={
                     CONF_GRPC_PORT: user_input.get(CONF_GRPC_PORT) or 0,
@@ -318,9 +334,7 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                             CONF_AGENT_UPDATE_CHECKS, DEFAULT_AGENT_UPDATE_CHECKS
                         )
                     ),
-                    CONF_AGENT_MANIFEST_URL: (
-                        user_input.get(CONF_AGENT_MANIFEST_URL) or ""
-                    ).strip(),
+                    CONF_AGENT_MANIFEST_URL: manifest_url,
                     CONF_REST_PSK: (user_input.get(CONF_REST_PSK) or "").strip(),
                     CONF_PICTURE_POLL_S: int(
                         user_input.get(CONF_PICTURE_POLL_S) or DEFAULT_PICTURE_POLL_S
@@ -338,7 +352,8 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                     ),
                 }
             )
-        options = self.config_entry.options
+        # Re-show what was typed when the form comes back with an error.
+        options = {**self.config_entry.options, **(user_input or {})}
         current = options.get(CONF_GRPC_PORT, 0)
         schema = vol.Schema(
             {
@@ -402,4 +417,4 @@ class BraviaTvGrpcOptionsFlow(OptionsFlow):
                 ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

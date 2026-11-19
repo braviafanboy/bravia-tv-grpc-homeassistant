@@ -1,4 +1,4 @@
-"""The gRPC client serialises writes and nonce-gated reads (no HA needed)."""
+"""The gRPC client serialises writes and nonce-gated reads."""
 
 from __future__ import annotations
 
@@ -8,8 +8,12 @@ import time
 import pytest
 
 pytest.importorskip("grpc")
+pytest.importorskip("homeassistant")  # the client lives in the integration package
 
 from custom_components.bravia_tv_grpc.bravia_tv_client import (  # noqa: E402
+    BraviaTvAuthError,
+    BraviaTvCallError,
+    BraviaTvConnectionError,
     BraviaTvGrpcClient,
 )
 
@@ -103,7 +107,6 @@ def test_write_reauthenticates_and_retries_once(monkeypatch):
 
 def test_write_gives_up_after_second_rejection(monkeypatch):
     import grpc
-    import pytest
 
     class AlwaysReject:
         def __call__(self, req: bytes, timeout: float = 0) -> bytes:
@@ -113,7 +116,23 @@ def test_write_gives_up_after_second_rejection(monkeypatch):
 
     client = _client(monkeypatch, AlwaysReject())
     monkeypatch.setattr(client, "_authenticate", lambda timeout=5.0: None)
-    with pytest.raises(grpc.RpcError):
+    # The TV answered, with an error: reported as such, not as gRPC's own type.
+    with pytest.raises(BraviaTvCallError) as caught:
+        client.exec_command("volume", 3)
+    assert caught.value.code is grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_write_with_no_answer_is_a_connection_error(monkeypatch):
+    import grpc
+
+    class Unavailable:
+        def __call__(self, req: bytes, timeout: float = 0) -> bytes:
+            err = grpc.RpcError()
+            err.code = lambda: grpc.StatusCode.UNAVAILABLE  # type: ignore[attr-defined]
+            raise err
+
+    client = _client(monkeypatch, Unavailable())
+    with pytest.raises(BraviaTvConnectionError):
         client.exec_command("volume", 3)
 
 
@@ -127,3 +146,20 @@ def test_rekey_switches_keys_and_rehandshakes(monkeypatch):
     assert client._session_id == "newkey"
     assert client._hmac_key == "cd" * 32
     assert calls == ["auth"]
+
+
+def test_rekey_keeps_the_old_keys_when_the_tv_refuses_the_new(monkeypatch):
+    """The TV refuses a key Sony has only just issued, and goes on accepting
+    the ones before: the session must carry on with those."""
+    client = _client(monkeypatch, _Overlap())
+    before = (client._hmac_key, client._session_key, client._session_id)
+    random_before = client._session_random
+
+    def refused(timeout=5.0):
+        raise BraviaTvAuthError("handshake failed: INVALID_ARGUMENT")
+
+    monkeypatch.setattr(client, "_authenticate", refused)
+    with pytest.raises(BraviaTvAuthError):
+        client.rekey("cd" * 32, "newkey", "ef" * 32)
+    assert (client._hmac_key, client._session_key, client._session_id) == before
+    assert client._session_random == random_before

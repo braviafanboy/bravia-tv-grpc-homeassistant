@@ -8,11 +8,11 @@ import json
 import secrets
 import time
 from typing import Any
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from aiohttp import ClientResponseError, ClientSession
+
+from .device_id import same_device
 
 CLIENT_ID = "4f97b8e2-0bb3-45ef-be91-b68e85ca7ee1"
 REDIRECT_URI = "ssh-app://signin"
@@ -25,8 +25,6 @@ IOT_USER_AGENT = (
     "Phone (Android 13; Pixel 3a) jp.co.sony.hes.home/3.6.3 "
     "(18194e34-ed54-4eb8-b488-4ac3bb6b8a8e)"
 )
-
-SESSION_KEYS_REFRESH_BUFFER = 3600
 
 _TOKEN_HEADERS = {
     "content-type": "application/x-www-form-urlencoded",
@@ -108,15 +106,17 @@ def select_tv_device(
             return match
     if device_unique_id:
         wanted = device_unique_id.lower()
-        match = next(
-            (
-                d
-                for d in devices
-                if (d.get("attributes") or {}).get("device_unique_id", "").lower()
-                == wanted
-            ),
-            None,
-        )
+        known = [
+            (str((d.get("attributes") or {}).get("device_unique_id") or "").lower(), d)
+            for d in devices
+        ]
+        match = next((d for uid, d in known if uid == wanted), None)
+        if match is None:
+            # A device with a long name announces only the beginning of its
+            # id; the account lists it whole. Two that begin alike settle
+            # nothing.
+            begins = [d for uid, d in known if same_device(uid, wanted)]
+            match = begins[0] if len(begins) == 1 else None
         if match is not None:
             if match.get("device_type") != TV_DEVICE_TYPE:
                 raise GrpcNotATvError(
@@ -263,116 +263,6 @@ def credentials_to_json(credentials: dict[str, Any]) -> str:
     return json.dumps(credentials, separators=(",", ":"))
 
 
-def keys_need_refresh(
-    credentials: dict[str, Any],
-    *,
-    buffer_seconds: int = SESSION_KEYS_REFRESH_BUFFER,
-) -> bool:
-    """True when the session keys or OAuth access token are missing/near expiry."""
-    now = int(time.time())
-    session_expires = credentials.get("session_keys_expires_at")
-    if session_expires is not None and now >= int(session_expires) - buffer_seconds:
-        return True
-    access_expires = credentials.get("access_token_expires_at")
-    return access_expires is not None and now >= int(access_expires) - buffer_seconds
-
-
-def _sync_post_form(url: str, payload: dict[str, str], headers: dict[str, str]) -> dict:
-    body = urllib.parse.urlencode(payload).encode()
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        msg = f"Sony Seeds token request failed: HTTP {exc.code}"
-        raise GrpcCredentialsRefreshError(msg) from exc
-
-
-def _sync_get_json(url: str, headers: dict[str, str]) -> dict:
-    request = urllib.request.Request(url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        msg = f"Sony Seeds API request failed: HTTP {exc.code}"
-        raise GrpcCredentialsRefreshError(msg) from exc
-
-
-def refresh_access_token(refresh_token: str) -> dict[str, Any]:
-    """Exchange a refresh token for a new access token (sync)."""
-    return _sync_post_form(
-        f"{AUTH_BASE_URL}/token",
-        {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": CLIENT_ID,
-        },
-        _TOKEN_HEADERS,
-    )
-
-
-def get_devices(access_token: str) -> dict[str, Any]:
-    """List Sony Seeds IoT devices (sync)."""
-    headers = {
-        **_IOT_HEADERS_BASE,
-        "authorization": f"Bearer {access_token}",
-    }
-    return _sync_get_json(f"{IOT_BASE_URL}/devices", headers)
-
-
-def get_device_states(device_id: str, access_token: str) -> dict[str, Any]:
-    """Fetch device state snapshot from Sony Seeds IoT API (sync)."""
-    headers = {
-        **_IOT_HEADERS_BASE,
-        "authorization": f"Bearer {access_token}",
-    }
-    return _sync_get_json(f"{IOT_BASE_URL}/devices/{device_id}/states", headers)
-
-
-def get_session_keys(device_id: str, access_token: str) -> dict[str, Any]:
-    """Fetch gRPC session keys for a device (sync)."""
-    url = f"{IOT_BASE_URL}/devices/{device_id}/session_keys"
-    headers = {
-        **_IOT_HEADERS_BASE,
-        "authorization": f"Bearer {access_token}",
-    }
-    body = b""
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        msg = f"Sony Seeds session_keys request failed: HTTP {exc.code}"
-        raise GrpcCredentialsRefreshError(msg) from exc
-
-
-def refresh_credentials(
-    credentials: dict[str, Any],
-    device_id: str | None = None,
-) -> dict[str, Any]:
-    """Refresh OAuth access token and fetch new gRPC session keys (sync)."""
-    refresh_token = credentials.get("refresh_token")
-    if not refresh_token:
-        msg = (
-            "No refresh_token in credentials; "
-            "re-authenticate the integration in Settings."
-        )
-        raise GrpcCredentialsError(msg)
-    token_response = refresh_access_token(refresh_token)
-    access_token = token_response["access_token"]
-    resolved_device_id = device_id or credentials.get("device_id")
-    if not resolved_device_id:
-        devices_response = get_devices(access_token)
-        devices = devices_response.get("devices", [])
-        if not devices:
-            msg = "No devices returned from Sony Seeds IoT API"
-            raise GrpcCredentialsRefreshError(msg)
-        resolved_device_id = devices[0]["device_id"]
-    session_keys = get_session_keys(resolved_device_id, access_token)
-    session_keys.setdefault("device_id", resolved_device_id)
-    return build_credentials_bundle(session_keys, token_response, previous=credentials)
-
-
 async def async_exchange_authorization_code(
     session: ClientSession, authorization_code: str, code_verifier: str
 ) -> dict[str, Any]:
@@ -392,7 +282,7 @@ async def async_exchange_authorization_code(
             response.raise_for_status()
         except ClientResponseError as exc:
             msg = f"Sony Seeds token request failed: HTTP {exc.status}"
-            raise GrpcCredentialsRefreshError(msg) from exc
+            raise GrpcCredentialsRefreshError(msg, status=exc.status) from exc
         return await response.json()
 
 
@@ -437,18 +327,6 @@ async def async_credentials_from_oauth(
     )
     session_keys.setdefault("device_id", resolved_device_id)
     return build_credentials_bundle(session_keys, token_response)
-
-
-async def async_list_oauth_devices(
-    session: ClientSession, token_response: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """List Sony IoT devices available after OAuth token exchange."""
-    devices_response = await async_get_devices(session, token_response["access_token"])
-    devices = devices_response.get("devices", [])
-    if not devices:
-        msg = "No devices returned from Sony Seeds IoT API"
-        raise GrpcCredentialsRefreshError(msg)
-    return devices
 
 
 async def async_complete_oauth_flow(
@@ -539,7 +417,7 @@ async def async_get_device_states(
             response.raise_for_status()
         except ClientResponseError as exc:
             msg = f"Sony Seeds device states request failed: HTTP {exc.status}"
-            raise GrpcCredentialsRefreshError(msg) from exc
+            raise GrpcCredentialsRefreshError(msg, status=exc.status) from exc
         return await response.json()
 
 

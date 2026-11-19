@@ -131,7 +131,10 @@ set_ambient_curves:
           integration: bravia_tv_grpc
     curves:
       required: true
-      example: '{"default": [9, 9, 11, 15, 25, 25], "modes": {"cinema": [5, 6, 8, 12, 20, 22]}}'
+      example:
+        default: [9, 9, 11, 15, 25, 25]
+        modes:
+          cinema: [5, 6, 8, 12, 20, 22]
       selector:
         object:
 get_ambient_curves:

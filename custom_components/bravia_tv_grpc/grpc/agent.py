@@ -1,24 +1,26 @@
 """Client for the HA TV Agent (the companion app running on the TV).
 
 Pure protocol module (aiohttp only, no Home Assistant): the agent serves a JSON
-document over plain HTTP on the LAN (default port 8585), advertises itself with
-mDNS ``_bravia-agent._tcp`` and streams changes as Server-Sent Events. See
+document over HTTPS on the LAN (default port 8585, a self-signed certificate
+that clients pin by its SHA-256 fingerprint), advertises itself with mDNS
+``_bravia-agent._tcp`` and streams changes as Server-Sent Events. See
 https://github.com/braviafanboy/bravia-tv-agent for the contract.
 """
 
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Iterable
 import hashlib
 import json
-import ssl
+import secrets
 from typing import Any
 
 import aiohttp
 
 AGENT_PORT = 8585
 AGENT_PACKAGE = "com.braviafanboy.braviaagent"
+# The contract version this client implements (``/v1/info`` -> agent.contract).
 CONTRACT = 1
 # Blocks of the state document the integration understands.
 BLOCKS = (
@@ -39,6 +41,9 @@ BLOCKS = (
 )
 _INFO_TIMEOUT = 4
 _REQUEST_TIMEOUT = 8
+# Room for one event line: the state document travels as a single ``data:``
+# line, and aiohttp fails a line longer than twice its read buffer.
+_EVENTS_READ_BUFFER = 1 << 20
 # The agent sends a heartbeat every 30 s; treat a longer silence as a dead link.
 EVENTS_IDLE_TIMEOUT = 75
 
@@ -52,11 +57,48 @@ class AgentUnauthorized(AgentError):
 
 
 class AgentPairingClosed(AgentError):
-    """POST /v1/pair outside the pairing window (403)."""
+    """POST /v1/pair answered 403: the pairing request is gone (it lapsed), or
+    an agent from before 0.10 has no pairing window open."""
+
+
+class AgentPairingDenied(AgentPairingClosed):
+    """The viewer denied the pairing request on the TV."""
+
+
+class AgentPairingBusy(AgentError):
+    """POST /v1/pair answered 409: another pairing request is waiting on the
+    agent, or ours just lapsed or was denied. ``retry_after`` is how many
+    seconds until it is worth asking again."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"another pairing request is waiting ({retry_after} s)")
+        self.retry_after = retry_after
+
+
+class AgentPairRequest:
+    """A pairing request the agent accepted (202).
+
+    ``secret`` is ours and ``nonce`` the agent's; together with the agent's
+    certificate they give the code both sides show (:func:`pairing_code`).
+    The agent has only our commitment to ``secret`` so far."""
+
+    def __init__(
+        self, request_id: str, secret: bytes, nonce: bytes, expires_in: float
+    ) -> None:
+        self.request_id = request_id
+        self.secret = secret
+        self.nonce = nonce
+        self.expires_in = expires_in
 
 
 class AgentFingerprintMismatch(AgentError):
-    """The agent presented a certificate other than the pinned one."""
+    """The agent's port presented a certificate other than the pinned one.
+
+    ``got`` is the SHA-256 (hex) of the certificate that was presented."""
+
+    def __init__(self, what: str, got: str | None = None) -> None:
+        super().__init__(what)
+        self.got = got
 
 
 class AgentRequestError(AgentError):
@@ -91,6 +133,13 @@ async def async_fetch_manifest(
     ):
         raise AgentError("manifest: missing version or url")
     return data
+
+
+def _as_int(value: Any, default: int) -> int:
+    """A count from the agent's JSON, or ``default`` when it is not one."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return default
 
 
 def missing_permissions(info: dict[str, Any]) -> list[str]:
@@ -139,28 +188,27 @@ def parse_sse(lines: Iterable[str]) -> Iterable[tuple[str, str]]:
         yield event, "\n".join(data)
 
 
-def make_ssl_context(cert_der: bytes | None) -> ssl.SSLContext:
-    """TLS client context for the agent.
+_PAIRING_LABEL = b"bravia-agent pairing 1"
+_PAIRING_SECRET_BYTES = 32
 
-    With ``cert_der`` (the agent's self-signed certificate) the context trusts
-    exactly that certificate and nothing else, so a different one fails the
-    handshake before any request is sent. Without it, verification is off:
-    used only to discover the agent and learn its certificate during pairing.
-    Names are never checked (the agent is addressed by IP).
 
-    Loads a certificate, so call it off the event loop.
+def pairing_code(secret: bytes, nonce: bytes, fingerprint: str) -> str:
+    """The six digits a pairing shows on both sides.
+
+    ``secret`` is the client's, ``nonce`` the agent's, ``fingerprint`` the
+    SHA-256 (hex) of the certificate the client saw the agent present. The
+    agent computes the same from its own certificate, so the two agree only
+    when nothing stands between them, and only for this one request. Neither
+    side can steer the result: the client commits to its secret before it
+    learns the agent's, and reveals it after.
+
+    The first four bytes of SHA-256(label, 0, secret, nonce, certificate
+    SHA-256) as a number, modulo a million.
     """
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = False
-    if cert_der is None:
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    ctx.verify_mode = ssl.CERT_REQUIRED
-    # The leaf is its own trust anchor; it carries no CA flag, so allow a
-    # chain that ends at a non-CA certificate in the store.
-    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    ctx.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(cert_der))
-    return ctx
+    digest = hashlib.sha256(
+        _PAIRING_LABEL + b"\x00" + secret + nonce + bytes.fromhex(fingerprint)
+    ).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 1_000_000:06d}"
 
 
 def fingerprint_of(cert_der: bytes) -> str:
@@ -168,24 +216,38 @@ def fingerprint_of(cert_der: bytes) -> str:
     return hashlib.sha256(cert_der).hexdigest()
 
 
-def encode_cert(cert_der: bytes) -> str:
-    return base64.b64encode(cert_der).decode("ascii")
-
-
 def decode_cert(text: str | None) -> bytes | None:
+    """A stored base64 DER certificate (entries pinned before fingerprints
+    alone were kept), or None."""
     try:
         return base64.b64decode(text) if text else None
     except ValueError:
         return None
 
 
+def normalize_fingerprint(value: Any) -> str | None:
+    """A stored fingerprint as 64 lowercase hex characters, or None."""
+    if not isinstance(value, str):
+        return None
+    text = value.replace(":", "").strip().lower()
+    if len(text) != 64:
+        return None
+    try:
+        bytes.fromhex(text)
+    except ValueError:
+        return None
+    return text
+
+
 class AgentClient:
     """Thin async HTTPS client for one agent instance.
 
-    ``ssl_context`` comes from :func:`make_ssl_context`: pinned to the agent's
-    certificate once known, permissive before pairing. The certificate seen on
-    each connection is recorded in ``seen_cert`` so the coordinator can pin it
-    after pairing has proven it talks to the right agent.
+    The agent's certificate is self-signed, so nothing about its name or chain
+    is checked. Instead the client pins the certificate itself: once
+    ``fingerprint`` (its SHA-256) is set, every connection is refused unless
+    the peer presents exactly that certificate. Before a pin exists the
+    connection is unverified; :meth:`async_fetch_fingerprint` reads the
+    certificate so the caller can pin it before sending anything that matters.
     """
 
     def __init__(
@@ -194,33 +256,39 @@ class AgentClient:
         host: str,
         port: int = AGENT_PORT,
         token: str | None = None,
-        ssl_context: ssl.SSLContext | None = None,
-        cert: bytes | None = None,
+        fingerprint: str | None = None,
     ) -> None:
         self._session = session
         self.host = host
         self.port = port
         self.token = token
-        self.ssl_context = ssl_context
-        self.cert = cert
-        self.seen_cert: bytes | None = None
+        self._fingerprint: str | None = None
+        # One object for the client's lifetime: aiohttp keys its connection
+        # pool on it, so requests share connections.
+        self._pin: aiohttp.Fingerprint | None = None
+        self.pin(fingerprint)
 
     @property
     def pinned(self) -> bool:
-        return self.cert is not None
+        return self._pin is not None
 
     @property
     def fingerprint(self) -> str | None:
-        return fingerprint_of(self.cert) if self.cert else None
+        """SHA-256 (lowercase hex) of the pinned certificate, if any."""
+        return self._fingerprint
 
-    @property
-    def seen_fingerprint(self) -> str | None:
-        return fingerprint_of(self.seen_cert) if self.seen_cert else None
-
-    def pin(self, cert_der: bytes | None, ssl_context: ssl.SSLContext) -> None:
-        """Use ``ssl_context`` (built for ``cert_der``) from now on."""
-        self.cert = cert_der
-        self.ssl_context = ssl_context
+    def pin(self, fingerprint: str | None) -> None:
+        """Accept only the certificate with this SHA-256 from now on; ``None``
+        drops the pin. Raises ``ValueError`` for anything but 64 hex digits."""
+        if fingerprint is None:
+            self._fingerprint = None
+            self._pin = None
+            return
+        text = normalize_fingerprint(fingerprint)
+        if text is None:
+            raise ValueError("fingerprint must be 64 hex characters")
+        self._pin = aiohttp.Fingerprint(bytes.fromhex(text))
+        self._fingerprint = text
 
     @property
     def base_url(self) -> str:
@@ -229,46 +297,62 @@ class AgentClient:
     def url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, auth: bool = True) -> dict[str, str]:
         # identity: a gzipped event stream would be buffered by the agent's
         # deflater and arrive in bursts instead of per event.
         headers = {"Accept-Encoding": "identity"}
-        if self.token:
+        if auth and self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
     def _ssl(self) -> Any:
-        """aiohttp ``ssl`` argument."""
-        return self.ssl_context if self.ssl_context is not None else False
-
-    def _observe(self, resp: aiohttp.ClientResponse) -> None:
-        """Record the certificate this response arrived over."""
-        try:
-            conn = resp.connection
-            transport = conn.transport if conn is not None else None
-            ssl_object = transport.get_extra_info("ssl_object") if transport else None
-            der = ssl_object.getpeercert(binary_form=True) if ssl_object else None
-        except Exception:  # noqa: BLE001
-            der = None
-        if der:
-            self.seen_cert = der
+        """aiohttp ``ssl`` argument: the pin, or no verification before one
+        exists (a self-signed certificate has nothing else to check)."""
+        return self._pin if self._pin is not None else False
 
     def _wrap(self, err: Exception, what: str) -> AgentError:
-        if self.pinned and isinstance(
-            err, aiohttp.ClientConnectorCertificateError | ssl.SSLCertVerificationError
-        ):
-            return AgentFingerprintMismatch(what)
+        if isinstance(err, aiohttp.ServerFingerprintMismatch):
+            got = getattr(err, "got", None)
+            return AgentFingerprintMismatch(
+                what, got.hex() if isinstance(got, bytes) else None
+            )
         return AgentError(f"{what}: {err}")
 
-    async def _get_json(self, path: str, timeout: float) -> dict[str, Any]:
+    async def async_fetch_fingerprint(self) -> str:
+        """SHA-256 (hex) of the certificate the agent's port presents now.
+
+        Used once, before pairing, to learn which certificate to pin. aiohttp
+        checks a pin right after the TLS handshake and reports the digest it
+        saw when the pin does not match, so asking for a pin nothing can
+        match reads the certificate without sending a request."""
+        probe = aiohttp.Fingerprint(bytes(32))
+        try:
+            async with self._session.get(
+                self.url("/v1/info"),
+                headers=self._headers(auth=False),
+                ssl=probe,
+                timeout=aiohttp.ClientTimeout(total=_INFO_TIMEOUT),
+            ):
+                pass
+        except aiohttp.ServerFingerprintMismatch as err:
+            got = getattr(err, "got", None)
+            if isinstance(got, bytes) and len(got) == 32:
+                return got.hex()
+            raise AgentError("certificate: not reported") from err
+        except (TimeoutError, aiohttp.ClientError, OSError) as err:
+            raise AgentError(f"certificate: {err}") from err
+        raise AgentError("certificate: could not be read")
+
+    async def _get_json(
+        self, path: str, timeout: float, *, auth: bool = True
+    ) -> dict[str, Any]:
         try:
             async with self._session.get(
                 self.url(path),
-                headers=self._headers(),
+                headers=self._headers(auth=auth),
                 ssl=self._ssl(),
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
-                self._observe(resp)
                 if resp.status == 401:
                     raise AgentUnauthorized(path)
                 if resp.status != 200:
@@ -285,8 +369,11 @@ class AgentClient:
         return data
 
     async def async_info(self) -> dict[str, Any]:
-        """``GET /v1/info`` (never needs the token)."""
-        return await self._get_json("/v1/info", _INFO_TIMEOUT)
+        """``GET /v1/info``. It answers without the token, and the call also
+        runs before a certificate is pinned, when no token may be sent. Once
+        the certificate is pinned the token goes along: the agent then adds
+        what it keeps from strangers (the TV's build, who is paired)."""
+        return await self._get_json("/v1/info", _INFO_TIMEOUT, auth=self.pinned)
 
     async def async_state(self) -> dict[str, Any]:
         return await self._get_json("/v1/state", _REQUEST_TIMEOUT)
@@ -308,40 +395,104 @@ class AgentClient:
         except (TimeoutError, aiohttp.ClientError, OSError) as err:
             raise self._wrap(err, "artwork") from err
 
-    async def async_pair(self, name: str) -> str:
-        """``POST /v1/pair`` while the agent's pairing window is open."""
+    async def _post_pair(self, params: dict[str, str]) -> tuple[int, dict[str, Any]]:
         try:
             async with self._session.post(
                 self.url("/v1/pair"),
-                params={"name": name},
+                params=params,
+                headers=self._headers(auth=False),
                 ssl=self._ssl(),
                 timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT),
             ) as resp:
-                self._observe(resp)
-                if resp.status == 403:
-                    raise AgentPairingClosed("pairing window closed")
-                if resp.status != 200:
-                    raise AgentError(f"pair: HTTP {resp.status}")
+                status = resp.status
+                if status not in (200, 202, 403, 409):
+                    raise AgentError(f"pair: HTTP {status}")
                 data = await resp.json(content_type=None)
         except AgentError:
             raise
         except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as err:
             raise self._wrap(err, "pair") from err
-        token = data.get("token") if isinstance(data, dict) else None
+        return status, data if isinstance(data, dict) else {}
+
+    def _paired(self, data: dict[str, Any]) -> str:
+        token = data.get("token")
         if not isinstance(token, str) or not token:
             raise AgentError("pair: no token in reply")
         self.token = token
         return token
 
-    async def async_stage_update(
-        self, url: str, sha256: str | None, version: str | None
-    ) -> None:
-        """``POST /v1/update``: tell the agent which APK to install next."""
-        params = {"url": url}
-        if sha256:
-            params["sha256"] = sha256
-        if version:
-            params["version"] = version
+    async def async_pair_request(self, name: str) -> AgentPairRequest | str:
+        """``POST /v1/pair?name=…&commit=…``: ask to pair.
+
+        The agent answers with a request (:class:`AgentPairRequest`) and its
+        own secret; nothing shows on the TV yet. ``commit`` is the SHA-256 of
+        a secret of ours, revealed next (:meth:`async_pair_reveal`). Raises
+        :class:`AgentPairingBusy` while another request is waiting there.
+
+        An agent from before 0.10 knows no requests: it hands out the token
+        while its pairing window is open (returned here as a ``str``) and
+        answers 403 otherwise (:class:`AgentPairingClosed`).
+        """
+        secret = secrets.token_bytes(_PAIRING_SECRET_BYTES)
+        status, data = await self._post_pair(
+            {"name": name, "commit": hashlib.sha256(secret).hexdigest()}
+        )
+        if status == 200:
+            return self._paired(data)
+        if status == 403:
+            raise AgentPairingClosed("no pairing window is open")
+        if status == 409:
+            raise AgentPairingBusy(_as_int(data.get("retry_after"), 30))
+        request_id = data.get("request")
+        if not isinstance(request_id, str) or not request_id:
+            raise AgentError("pair: no request id in reply")
+        try:
+            nonce = bytes.fromhex(str(data.get("nonce") or ""))
+        except ValueError:
+            nonce = b""
+        if len(nonce) != _PAIRING_SECRET_BYTES:
+            raise AgentError("pair: no agent secret in reply")
+        return AgentPairRequest(
+            request_id, secret, nonce, _as_int(data.get("expires_in"), 30)
+        )
+
+    async def async_pair_reveal(self, asked: AgentPairRequest) -> str:
+        """``POST /v1/pair?request=<id>&reveal=…``: reveal our secret, which
+        gives the request its code, and return that code as we compute it.
+
+        It is tied to the pinned certificate, so pairing needs one: a code
+        computed from a certificate nobody checked would prove nothing."""
+        if not self._fingerprint:
+            raise AgentError("pair: no certificate is pinned")
+        status, _ = await self._post_pair(
+            {"request": asked.request_id, "reveal": asked.secret.hex()}
+        )
+        if status != 202:
+            raise AgentPairingClosed("the pairing request is gone")
+        return pairing_code(asked.secret, asked.nonce, self._fingerprint)
+
+    async def async_pair_collect(self, request_id: str) -> str | None:
+        """``POST /v1/pair?request=<id>``: collect the token for a request.
+
+        ``None`` while the viewer has not allowed it yet. Raises
+        :class:`AgentPairingDenied` when they denied it, and
+        :class:`AgentPairingClosed` once the request is gone."""
+        status, data = await self._post_pair({"request": request_id})
+        if status == 200:
+            return self._paired(data)
+        if status == 202:
+            return None
+        if data.get("error") == "pairing_denied":
+            raise AgentPairingDenied("the pairing request was denied on the TV")
+        raise AgentPairingClosed("the pairing request lapsed")
+
+    async def async_stage_update(self, url: str, sha256: str, version: str) -> None:
+        """``POST /v1/update``: tell the agent which APK to install next. The
+        agent takes it only with the SHA-256 the download must have and the
+        version it brings (and from 0.10 only from an https address)."""
+        if not sha256 or not version:
+            raise AgentError("update: the release manifest has no checksum or version")
+        params = {"url": url, "sha256": sha256, "version": version}
         try:
             async with self._session.post(
                 self.url("/v1/update"),
@@ -379,7 +530,6 @@ class AgentClient:
                 ssl=self._ssl(),
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
-                self._observe(resp)
                 if resp.status == 401:
                     raise AgentUnauthorized(path)
                 try:
@@ -394,6 +544,18 @@ class AgentClient:
         except (TimeoutError, aiohttp.ClientError, OSError) as err:
             raise self._wrap(err, path) from err
         return data if isinstance(data, dict) else {}
+
+    async def async_arm_setup(self) -> bool:
+        """``POST /v1/setup``: the next launch of the agent by the TV opens its
+        permission screens. False for an agent that has no such call (before
+        0.10), where the launch alone has to do."""
+        try:
+            await self._request("POST", "/v1/setup")
+        except AgentRequestError as err:
+            if err.status in (404, 405):
+                return False
+            raise
+        return True
 
     async def async_find_remote(self) -> str:
         """``POST /v1/remote/find``: beep the remote. Returns the agent's
@@ -549,8 +711,8 @@ class AgentClient:
                     sock_connect=_REQUEST_TIMEOUT,
                     sock_read=EVENTS_IDLE_TIMEOUT,
                 ),
+                read_bufsize=_EVENTS_READ_BUFFER,
             ) as resp:
-                self._observe(resp)
                 if resp.status == 401:
                     raise AgentUnauthorized("/v1/events")
                 if resp.status != 200:
@@ -578,6 +740,9 @@ class AgentClient:
             raise
         except (TimeoutError, aiohttp.ClientError, OSError) as err:
             raise self._wrap(err, "events") from err
+        except ValueError as err:
+            # aiohttp's "Chunk too big": one line outgrew the read buffer.
+            raise AgentError(f"events: {err}") from err
         raise AgentError("events: stream ended")
 
 
@@ -586,4 +751,7 @@ def state_blocks(document: dict[str, Any]) -> dict[str, Any]:
     return {block: document.get(block) for block in BLOCKS}
 
 
-ArtworkFetcher = Callable[[], Any]
+def contract_of(info: dict[str, Any]) -> int | None:
+    """The contract version an agent's ``/v1/info`` reports, if any."""
+    value = (info.get("agent") or {}).get("contract")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

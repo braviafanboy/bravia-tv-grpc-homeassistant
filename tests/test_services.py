@@ -151,3 +151,53 @@ def test_device_entry_ids_across_cores():
         "e1",
         "e2",
     }
+
+
+@pytest.mark.parametrize(
+    ("service", "data"),
+    [
+        ("show_dashboard", {}),  # no dashboard
+        ("show_dashboard", {"dashboard": "lovelace/0", "mode": "sideways"}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "position": "middle"}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "size": 19}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "size": 101}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "duration": -1}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "duration": 3601}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "kiosk": "maybe"}),
+        ("show_dashboard", {"dashboard": "lovelace/0", "extra": 1}),
+        ("save_picture_profile", {}),  # no name
+        ("restore_picture_profile", {"name": "a", "force": "perhaps"}),
+        ("set_ambient_curves", {"curves": "not an object"}),
+        ("set_ambient_curves", {}),
+    ],
+)
+async def test_actions_refuse_bad_input(hass: HomeAssistant, tvs, service, data):
+    """Nothing malformed reaches the TV: the action's own schema says no."""
+    import voluptuous as vol
+
+    (first, device), _ = tvs
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN, service, {"device_id": device.id, **data}, blocking=True
+        )
+    for method in (
+        first.async_show_dashboard,
+        first.async_save_picture_profile,
+        first.async_restore_picture_profile,
+        first.async_ambient,
+    ):
+        method.assert_not_called()
+
+
+async def test_every_action_needs_a_tv(hass: HomeAssistant, tvs):
+    from homeassistant.core import SupportsResponse
+    import voluptuous as vol
+
+    services = hass.services.async_services()[DOMAIN]
+    assert len(services) == 9
+    for service in services:
+        only = hass.services.supports_response(DOMAIN, service) is SupportsResponse.ONLY
+        with pytest.raises(vol.Invalid):
+            await hass.services.async_call(
+                DOMAIN, service, {}, blocking=True, return_response=only
+            )

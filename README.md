@@ -29,8 +29,10 @@ change to Home Assistant as it happens.
   picture setting from the TV's menu, and an ambient brightness mode that sets
   the picture Brightness from the room's light.
 - **Resilient.** It recovers from TV reboots, network drops and expired
-  sessions on its own. Controls that cannot be used in the current context
-  show as unavailable, and a diagnostic sensor says why.
+  sessions on its own. A TV that is off or out of reach shows as off, can
+  still be turned on from Home Assistant (through Sony's cloud), and is picked
+  up again when it returns. Controls that cannot be used in the current
+  context show as unavailable, and a diagnostic sensor says why.
 
 The [entity reference](docs/entities.md) lists everything the integration
 creates.
@@ -100,8 +102,11 @@ Assistant and the TV.
 
 The [HA TV Agent](https://github.com/braviafanboy/bravia-tv-agent) is a small
 app for the TV, part of this project. Install it once with adb, following its
-README. The integration then finds it, pairs with it and adds its entities
-automatically.
+README. The integration then finds it and raises a repair, *HA TV Agent is
+not paired*. Run it while you are at the TV: Home Assistant shows a six-digit
+code and opens the agent on the TV, which asks whether to allow the pairing
+and shows a code of its own. If the two are the same, choose **Allow** with
+the remote, and the agent's entities appear.
 
 Agent updates come through Home Assistant but are never installed on their
 own. Each integration release is paired with one agent version, and an update
@@ -113,6 +118,25 @@ off in the options.
 
 The **Agent setup** button on the TV's device page brings up the permission
 prompts for now-playing and the remote's battery.
+
+The link to the agent is encrypted, and the integration only talks to the
+agent it paired with: it remembers the agent's certificate and refuses any
+other. If the agent is reinstalled (it then has a new certificate), a repair
+asks you to confirm before the integration pairs with it again. That is on
+purpose: a different certificate at the TV's address is also what something
+else answering in the agent's place would look like, and the integration sends
+it nothing until you say so.
+
+The code is what makes the pairing yours. It is worked out from a secret of
+Home Assistant's, a secret of the agent's and the agent's certificate, so the
+TV shows the code you see in Home Assistant only for the request Home
+Assistant made, to the agent itself. Another device on your network can ask
+the agent to pair, but what the TV then shows is a code Home Assistant is not
+showing, and the same goes for anything that answers in the agent's place.
+Deny those; Deny is also what the TV offers first. (Agents before 0.10.0 gave
+the token to whichever device asked first after the agent was opened, with
+nothing to allow. The integration still pairs with them that way, and offers
+the update.)
 
 ### Picture settings
 
@@ -140,10 +164,12 @@ page, no automations required:
 
 - **New profile name** (text) — type a name here.
 - **Save picture profile** (button) — snapshots the current settings under that
-  name; the box then clears.
+  name; the box then clears. The settings are read from the TV at that moment,
+  so changes just made with the remote are in the snapshot.
 - **Picture profile** (dropdown) — your saved profiles for the dynamic range
   playing now (SDR, HDR10 or Dolby Vision; the list follows the content).
-  Picking one only *selects* it (it does not touch the TV).
+  Picking one only *selects* it (it does not touch the TV). Nothing is selected
+  until you pick one or save one.
 - **Restore to picture mode** (dropdown) — the picture mode a restore goes
   into. Picking a profile sets it to that profile's own mode; choose another
   mode to copy a calibration across, e.g. from Custom for Pro 1 into Custom for
@@ -152,6 +178,9 @@ page, no automations required:
 - **Restore picture profile** (button) — writes the selected profile back to
   the TV. It sets the picture mode first, then only the settings that differ, so
   a restore is quick. Settings the target mode doesn't have are skipped.
+  A restore replaces that mode's settings, so it first saves what it is about
+  to replace as the profile **Before last restore**. Restore that one to take
+  the restore back (which swaps the two, so it also redoes).
 - **Delete picture profile** (button) — removes the selected profile.
 
 A typical calibration session: save a *before* profile, make changes, save an
@@ -230,8 +259,8 @@ separate picture values for HDR and Dolby Vision).
   current picture mode's curve; they show and edit whichever mode is active.
 - **Reset ambient brightness curve** (button) — drops the current mode's own
   curve so it follows the shared default again.
-- **Ambient brightness status** (sensor) — off, active, paused or unavailable,
-  with the reason and the curves as attributes.
+- **Ambient brightness status** (sensor) — off, active, paused or not
+  available, with the reason and the curves as attributes.
 
 It pauses itself while the TV's own **Auto luminance level** is on (the two
 would fight), without the IP control key, while the screen is off, and during
@@ -272,13 +301,22 @@ data:
   duration: 20
 ```
 
-How it signs in: on first use the integration creates a limited user,
-**HA TV Agent display** (not an administrator, local network only), and hands
-the TV 30-minute access tokens for it over the agent's local, encrypted link.
-The TV never holds a lasting credential, and nothing about your Home Assistant
-goes through Sony. Home Assistant can't limit a sign-in to one dashboard, so
-the TV can open whatever that user can see; admin-only dashboards won't open.
-The user is removed when the last TV is removed from the integration.
+How it signs in: on first use the integration creates limited users for the
+TV (not administrators, local network only) and hands the TV 30-minute access
+tokens over the agent's local, encrypted link:
+
+- **HA TV Agent display** for a full-screen dashboard, which you operate with
+  the remote.
+- **HA TV Agent display (view only)** for an overlay. It is in Home
+  Assistant's read-only group: it can show states, and cannot call a single
+  action.
+
+The TV never holds a lasting credential, it only gets a token while a
+dashboard that Home Assistant opened is showing, and nothing about your Home
+Assistant goes through Sony. Home Assistant can't limit a sign-in to one
+dashboard, so the TV can open whatever that user can see; admin-only
+dashboards won't open. The users are removed when the last TV is removed from
+the integration.
 
 The TV loads the dashboard from Home Assistant's local address (Settings →
 System → Network), so it must be able to reach Home Assistant. If the TV is on
@@ -295,7 +333,11 @@ Assistant over HTTPS needs a certificate the TV trusts.
 - **Check for HA TV Agent updates:** on by default; off removes the agent's
   update entity and stops the checks.
 - **Agent release manifest URL:** leave empty for the agent release paired
-  with this integration; set it only to serve the agent from elsewhere.
+  with this integration; set it (an `http://` or `https://` address) only to
+  serve the agent from elsewhere.
+- **Default on-screen message icon** and **duration:** what
+  `notify.send_message` uses; the Send notification action can override both
+  per message.
 
 ## Troubleshooting
 
@@ -307,8 +349,15 @@ Assistant over HTTPS needs a certificate the TV trusts.
 - **"The Sony login redirect could not be validated":** the pasted value was
   incomplete or from another attempt. Restart the step and paste the whole
   address.
-- **Entities unavailable after a TV reboot:** wait a minute or two. The
-  integration finds the TV again and refreshes its keys on its own.
+- **The TV shows as off, or its entities as unavailable, although it is on:**
+  wait a minute. After the TV was off, rebooted or lost its network, the
+  integration finds it again (on its new port, with fresh keys) on its own;
+  it looks again at once when the TV announces itself on the network.
+- **A repair says the HA TV Agent has a different certificate:** expected
+  after reinstalling the agent or clearing its data. Run the repair at the
+  TV: it pairs again, with a code to compare, as the first time. If you
+  did not reinstall it, do not confirm: find out what else answers at the
+  TV's address. The repair clears by itself when the original agent is back.
 - **A cloud control fails to send:** the TV needs internet access and Sony's
   cloud must be reachable. "The TV rejected the cloud command" means the TV
   could not act in its current state, such as seeking with nothing playing.

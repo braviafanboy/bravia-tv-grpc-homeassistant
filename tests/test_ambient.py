@@ -134,3 +134,47 @@ async def test_signal_hint_is_sent_and_never_raises(hass: HomeAssistant):
     await c._async_send_ambient_signal()
     c.agent.async_ambient = AsyncMock(side_effect=RuntimeError("boom"))
     await c._async_send_ambient_signal()
+
+
+async def test_the_agents_unavailable_is_a_state_of_its_own(hass: HomeAssistant):
+    """The agent reports "unavailable" when the feature cannot run (no light
+    sensor, no key). That word is what Home Assistant calls an entity it
+    cannot reach, so the sensor shows "not_available" instead."""
+    coordinator = _coordinator(
+        hass, {**STATUS, "state": "unavailable", "reason": "no_light_sensor"}
+    )
+    sensor = ambient.BraviaTvAmbientStatusSensor(coordinator)
+    assert sensor.available
+    assert sensor.native_value == "not_available"
+    assert "unavailable" not in sensor.options
+    assert sensor.native_value in sensor.options
+    assert sensor.extra_state_attributes["reason"] == "no_light_sensor"
+    # An unknown state is unknown, not passed through.
+    coordinator._state[agent_path("ambient")] = {**STATUS, "state": "dancing"}
+    assert sensor.native_value is None
+
+
+async def test_moving_readings_are_not_recorded(hass: HomeAssistant):
+    sensor = ambient.BraviaTvAmbientStatusSensor(_coordinator(hass))
+    attributes = sensor.extra_state_attributes
+    assert {"lux", "target", "brightness", "curves", "anchors_lux"} <= set(attributes)
+    assert sensor._unrecorded_attributes >= {
+        "lux",
+        "target",
+        "brightness",
+        "curves",
+        "anchors_lux",
+    }
+    # What explains the state is kept.
+    assert not {"reason", "picture_mode", "own_curve"} & sensor._unrecorded_attributes
+
+
+async def test_anchor_range_follows_the_brightness_slider(hass: HomeAssistant):
+    from types import SimpleNamespace
+
+    coordinator = _coordinator(hass)
+    assert ambient.BraviaTvAmbientAnchor(coordinator, 0).native_max_value == 50
+    coordinator.client.capabilities = {
+        "display_setting.brightness": SimpleNamespace(type="int", min=0, max=100)
+    }
+    assert ambient.BraviaTvAmbientAnchor(coordinator, 0).native_max_value == 100

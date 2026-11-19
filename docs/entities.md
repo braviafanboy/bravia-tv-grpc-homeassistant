@@ -10,6 +10,11 @@ installed. A few are disabled by default.
 
 These come from the TV's local gRPC control service and update by push.
 
+While the TV is off the network (standby, unplugged, rebooting), the media
+player, the remote and the power switch read *off* and can still turn it on
+(through Sony's cloud); every other entity is unavailable until the TV is
+back, which the integration notices on its own.
+
 - **`media_player`** (the primary device entity): power, volume (set and
   step), mute, and **source selection** across HDMI and external inputs and
   installed apps. It includes a browsable grid of installed apps with icons
@@ -74,7 +79,7 @@ command is an error rather than a silent no-op.
 | `search` | `bravia_tv_grpc.search` service | Shows Sony's on-screen search results for a query; `play: true` plays the best match |
 | `speaker_type` | `select` Speaker Type | TV or audio system; disabled by default as it overlaps Speakers |
 | `access_shortcut` | `switch` Accessibility Service | Turns the service on the TV's accessibility shortcut (TalkBack by default) on or off. Works only after the shortcut has been set up once by holding **Mute** for 3 seconds. Optimistic and disabled by default |
-| `power` | Power-on fallback | Used only when the local write fails, which wakes a TV in standby |
+| `power` | Power-on fallback | Used when the local write fails or the TV is out of reach, which wakes a TV in standby |
 
 The TV acts on these only while it is on, so they are unavailable when it is
 off. They need internet access and Sony's cloud to be up. The TV pushes no
@@ -105,7 +110,7 @@ installed on the TV, the device gains:
 | `button` Find remote | The remote's Bluetooth link | Makes the remote beep, as the TV's own Find remote does; press any button on the remote to silence it. Works while the TV is on; needs the Bluetooth permission |
 | `update` HA TV Agent | The agent's release manifest | Installs a new agent version, with one confirmation on the TV |
 | `notify` On-screen message | The agent's overlay on the TV | Shows a message on the TV screen as a banner styled like the TV's own notifications. `notify.send_message` takes a message and title (default icon/duration from the integration's options); the `bravia_tv_grpc.send_notification` action adds an icon and duration. Works while the TV is on; not shown over the Settings menu and other secure screens |
-| `bravia_tv_grpc.show_dashboard` / `close_dashboard` actions | The agent's built-in browser | Shows a Home Assistant dashboard on the TV, full screen (interactive with the remote) or as a view-only overlay panel; signs in as the limited *HA TV Agent display* user. See the README |
+| `bravia_tv_grpc.show_dashboard` / `close_dashboard` actions | The agent's built-in browser | Shows a Home Assistant dashboard on the TV, full screen (interactive with the remote) or as a view-only overlay panel; signs in as a limited display user (one that can only look, for an overlay). See the README |
 | Picture settings and power saving | The TV's REST IP control, called by the agent on the TV | See below |
 
 Agent entities are unavailable while the TV is off, since the TV leaves the
@@ -135,7 +140,7 @@ these entities edit and mirror it. Off by default.
 | `switch` Ambient brightness learning | How a manual brightness change is treated: on, it learns the new value for the current light and holds a minute before resuming; off, it switches ambient brightness off until you turn it back on |
 | `number` Ambient brightness at 0 / 10 / 25 / 60 / 150 / 500 lux | The current picture mode's curve (0-50); they show and edit whichever mode is active |
 | `button` Reset ambient brightness curve | The current mode follows the shared default again |
-| `sensor` Ambient brightness status | Off, active, paused or unavailable; `reason`, `picture_mode`, `target`, `lux` and all `curves` as attributes |
+| `sensor` Ambient brightness status | Off, active, paused or not available (state `not_available`); `reason`, `picture_mode`, `target`, `lux` and all `curves` as attributes. The readings and curves are not kept in history |
 
 Actions taking the TV as `device_id`: `bravia_tv_grpc.get_ambient_curves`
 (returns all curves) and `bravia_tv_grpc.set_ambient_curves` (replaces them),
@@ -143,7 +148,7 @@ for backups and scripts. It pauses itself while the TV's own Auto luminance
 level is on, without the IP control key, with the screen off and during HDR or
 Dolby Vision.
 
-Restoring a [picture profile](#picture-settings) sets a new brightness
+Restoring a [picture profile](#picture-profiles) sets a new brightness
 baseline, which makes the learnt curve for that picture mode stale. So when the
 learner is on, a restore resets that mode's curve (as the Reset button does) to
 relearn from the restored baseline; the restore result reports this as
@@ -181,3 +186,43 @@ keep their gRPC entities.
   tone mapping on SDR content.
 - **Repairs** appear when the TV rejects the key, or when IP control stays
   unreachable for 3 minutes (Control remotely switched off on the TV).
+
+## Picture profiles
+
+With the agent installed and the IP control key set, the TV's picture settings
+can be saved under a name and written back later. The README's
+[Picture profiles](../README.md#picture-profiles) section explains how they
+behave; these are the pieces, all on the TV's device page under
+*Configuration*:
+
+| Entity | What it does |
+|---|---|
+| `text` New profile name | The name the next save uses; cleared after a save |
+| `button` Save picture profile | Reads the TV's settings afresh and stores them under that name |
+| `select` Picture profile | The saved profiles for the dynamic range playing now. Choosing one only selects it; nothing is selected until you choose. Attributes: `picture_mode`, `dynamic_range`, `model`, `settings`, `saved` |
+| `select` Restore to picture mode | The picture mode a restore goes into: the profile's own (*From saved profile*) or another one the TV offers now |
+| `button` Restore picture profile | Writes the selected profile to the TV, after keeping what it replaces as the profile *Before last restore* |
+| `button` Delete picture profile | Removes the selected profile |
+
+Actions taking the TV as `device_id`: `bravia_tv_grpc.save_picture_profile`,
+`restore_picture_profile` (with `force` and `picture_mode`),
+`delete_picture_profile`, `list_picture_profiles` and
+`compare_picture_profiles`. A restore answers with what it applied, what
+failed, and `backup`, the name of the profile holding the replaced settings.
+
+## Repairs
+
+Besides the picture-setting repairs above, the integration raises one when:
+
+- the TV has never been reached since it was added (a TV that is merely off
+  later on is not a repair: it shows as off);
+- the HA TV Agent is older than the integration needs, speaks a newer version
+  of its interface than the integration knows, or lacks a permission;
+- the HA TV Agent was found but is not paired (agent 0.10.0 or later). Run
+  this one at the TV: it shows a code, the TV shows a code, and you allow the
+  pairing there if they are the same;
+- the HA TV Agent's address presents a different certificate than the one the
+  integration paired with. This one asks for a confirmation, and nothing is
+  sent to the agent until it is given: it is what a reinstalled agent looks
+  like, and also what an impostor would look like. Confirming leads into the
+  same pairing by code.

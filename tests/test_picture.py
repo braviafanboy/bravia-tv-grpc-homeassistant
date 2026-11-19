@@ -1,6 +1,14 @@
-"""Pure tests for the picture-target classification (no Home Assistant)."""
+"""Tests for the picture-target classification.
 
-from custom_components.bravia_tv_grpc import picture
+The module itself is free of Home Assistant, but it lives in the integration
+package, whose import needs it.
+"""
+
+import pytest
+
+pytest.importorskip("homeassistant")
+
+from custom_components.bravia_tv_grpc import picture  # noqa: E402
 
 
 def test_kind_from_candidates():

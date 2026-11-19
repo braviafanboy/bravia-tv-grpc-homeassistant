@@ -67,7 +67,10 @@ def decode_capabilities_json_text(raw: bytes) -> str | None:
             payload = cap_blob[inner : inner + payload_len]
             inner += payload_len
             if cfield == _FIELD_CAPABILITIES:
-                return payload.decode("utf-8")
+                try:
+                    return payload.decode("utf-8")
+                except UnicodeDecodeError:
+                    return None
     return None
 
 
@@ -76,7 +79,7 @@ def _optional_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -110,7 +113,8 @@ def capability_index_from_json(
         name = entry.get("name")
         if not isinstance(name, str) or not name:
             continue
-        props = entry.get("props") if isinstance(entry.get("props"), dict) else {}
+        raw_props = entry.get("props")
+        props: dict[str, Any] = raw_props if isinstance(raw_props, dict) else {}
         cap_type = entry.get("type")
         index[name] = CapabilityMeta(
             name=name,
@@ -122,11 +126,6 @@ def capability_index_from_json(
     return index
 
 
-def capability_path_names(cap_json: dict[str, Any] | str) -> frozenset[str]:
-    """Return the set of capability ``name`` strings from parsed JSON."""
-    return frozenset(capability_index_from_json(cap_json))
-
-
 def parse_capability_index(raw: bytes) -> dict[str, CapabilityMeta] | None:
     """Decode GetCapabilities response bytes into a path metadata index."""
     text = decode_capabilities_json_text(raw)
@@ -135,79 +134,12 @@ def parse_capability_index(raw: bytes) -> dict[str, CapabilityMeta] | None:
         return None
     try:
         index = capability_index_from_json(text)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         _LOGGER.debug("GetCapabilities JSON parse failed", exc_info=True)
         return None
     if not index:
         return None
     return index
-
-
-def parse_capability_paths(raw: bytes) -> frozenset[str] | None:
-    """Decode GetCapabilities response bytes into a path-name allowlist."""
-    index = parse_capability_index(raw)
-    if index is None:
-        return None
-    return frozenset(index)
-
-
-def is_int_capability(
-    path: str, capability_index: dict[str, CapabilityMeta] | None
-) -> bool | None:
-    """
-    Return True/False when *path* is in the index; None when unknown.
-
-    Callers should fall back to mapped int-path allowlists when this is None.
-    """
-    if capability_index is None:
-        return None
-    meta = capability_index.get(path)
-    if meta is None:
-        return None
-    return meta.type == "int"
-
-
-def int_range_from_capability(
-    path: str, capability_index: dict[str, CapabilityMeta] | None
-) -> tuple[int, int] | None:
-    """Return (min, max) when both are present for an int capability path."""
-    if capability_index is None:
-        return None
-    meta = capability_index.get(path)
-    if meta is None or meta.type != "int":
-        return None
-    if meta.min is None or meta.max is None:
-        return None
-    return (meta.min, meta.max)
-
-
-def enum_values_from_capability(
-    path: str, capability_index: dict[str, CapabilityMeta] | None
-) -> tuple[str, ...] | None:
-    """Return props.values for *path* when present; None when unknown/empty."""
-    if capability_index is None:
-        return None
-    meta = capability_index.get(path)
-    if not isinstance(meta, CapabilityMeta) or not meta.values:
-        return None
-    return meta.values
-
-
-def filter_field_paths(
-    ha_paths: list[str], capability_paths: frozenset[str] | None
-) -> list[str]:
-    """
-    Intersect HA path list with device capabilities, preserving HA order.
-
-    When *capability_paths* is None or the intersection is empty, return
-    *ha_paths* unchanged (soft fallback).
-    """
-    if capability_paths is None:
-        return list(ha_paths)
-    filtered = [path for path in ha_paths if path in capability_paths]
-    if not filtered:
-        return list(ha_paths)
-    return filtered
 
 
 def _command_independence_blocks_getstates(props: dict[str, Any]) -> bool:
@@ -242,7 +174,7 @@ def paths_for_safe_get_states(cap_json: dict[str, Any] | str | None) -> list[str
     if isinstance(cap_json, str):
         try:
             parsed: Any = json.loads(cap_json)
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             return []
     else:
         parsed = cap_json
@@ -258,7 +190,8 @@ def paths_for_safe_get_states(cap_json: dict[str, Any] | str | None) -> list[str
         name = entry.get("name")
         if not isinstance(name, str) or not name:
             continue
-        props = entry.get("props") if isinstance(entry.get("props"), dict) else {}
+        raw_props = entry.get("props")
+        props: dict[str, Any] = raw_props if isinstance(raw_props, dict) else {}
         if props.get("get") is not True:
             continue
         if _command_independence_blocks_getstates(props):

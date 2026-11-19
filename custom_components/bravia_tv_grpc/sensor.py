@@ -129,7 +129,7 @@ def _label(value: object, table: dict[str, str]) -> str | None:
     return table.get(value.lower(), value.replace("_", " "))
 
 
-def _frame_rate_label(value: object) -> str | None:
+def _frame_rate_label(value: Any) -> str | None:
     """Format a frame rate as e.g. "50fps" (24.0 -> "24fps", 23.976 kept)."""
     if value is None:
         return None
@@ -339,6 +339,9 @@ class BraviaTvAppListSensor(BraviaTvEntity, SensorEntity):
     _attr_translation_key = "app_list"
     _attr_icon = "mdi:apps-box"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # Every installed app, id and label: useful live, far too large to store
+    # in the recorder with each state.
+    _unrecorded_attributes = frozenset({"apps"})
 
     def __init__(self, coordinator: BraviaTvCoordinator) -> None:
         super().__init__(coordinator, _APP_LIST)

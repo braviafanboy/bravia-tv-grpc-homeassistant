@@ -33,6 +33,10 @@ class BraviaTvEntity(CoordinatorEntity[BraviaTvCoordinator]):
     # unreliable) .availability/.visibility companion. Read-only diagnostics
     # leave it False so they keep showing their value while restricted.
     _gate_on_unavailable_reason: bool = False
+    # While the TV cannot be reached (standby, unplugged) its entities are
+    # unavailable, except the few that then say "off" and can still turn it
+    # on through the cloud: the media player, the remote and the power switch.
+    _available_offline: bool = False
 
     def __init__(self, coordinator: BraviaTvCoordinator, grpc_path: str) -> None:
         super().__init__(coordinator)
@@ -68,6 +72,8 @@ class BraviaTvEntity(CoordinatorEntity[BraviaTvCoordinator]):
         """
         if not super().available:
             return False
+        if self.coordinator.offline:
+            return self._available_offline
         data = self.coordinator.data or {}
         for suffix in (".availability", ".visibility"):
             if data.get(f"{self._grpc_path}{suffix}") is False:
@@ -188,7 +194,7 @@ def async_add_picture_entities(
     coordinator: BraviaTvCoordinator,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-    factory: Callable[[BraviaTvCoordinator, str, str], Entity | None],
+    factory: Callable[[BraviaTvCoordinator, str, str | None], Entity | None],
 ) -> None:
     """Add picture entities as the agent reports targets: now, and whenever a
     target appears later (the agent connects after setup, a new firmware adds

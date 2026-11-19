@@ -20,13 +20,12 @@ from .const import (
     CONF_NOTIFY_ICON,
     DEFAULT_NOTIFY_ICON,
     DOMAIN,
+    MAX_NOTIFY_DURATION,
+    MIN_NOTIFY_DURATION,
     NOTIFY_ICON_OPTIONS,
 )
 from .coordinator import BraviaTvCoordinator
 from .entity import BraviaTvAgentEntity
-
-MIN_DURATION = 1
-MAX_DURATION = 120
 
 
 async def async_setup_entry(
@@ -50,7 +49,8 @@ async def async_setup_entry(
                 NOTIFY_ICON_OPTIONS
             ),
             vol.Optional("duration"): vol.All(
-                vol.Coerce(int), vol.Range(min=MIN_DURATION, max=MAX_DURATION)
+                vol.Coerce(int),
+                vol.Range(min=MIN_NOTIFY_DURATION, max=MAX_NOTIFY_DURATION),
             ),
         },
         "async_send_notification",

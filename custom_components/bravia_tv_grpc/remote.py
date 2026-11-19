@@ -110,6 +110,8 @@ class BraviaTvRemote(BraviaTvEntity, RemoteEntity):
     """Sends the TV's remote_key actions via remote.send_command."""
 
     _attr_translation_key = "remote"
+    # An unreachable TV is "off", and can be turned on through the cloud.
+    _available_offline = True
 
     def __init__(
         self, coordinator: BraviaTvCoordinator, commands: dict[str, tuple[str, Any]]

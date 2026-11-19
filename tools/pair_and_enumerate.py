@@ -125,8 +125,54 @@ def _sync_exchange_code(auth_code: str, code_verifier: str) -> dict:
     req = urllib.request.Request(
         f"{cred.AUTH_BASE_URL}/token", data=body, headers=cred._TOKEN_HEADERS
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
+
+
+# The integration itself talks to Sony asynchronously (aiohttp); this tool has
+# no event loop, so it carries its own small blocking versions of those calls.
+def _sync_json(
+    url: str, headers: dict, *, data: bytes | None = None, method: str = "GET"
+) -> dict:
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+def _iot_headers(access_token: str) -> dict:
+    return {**cred._IOT_HEADERS_BASE, "authorization": f"Bearer {access_token}"}
+
+
+def _get_devices(access_token: str) -> dict:
+    return _sync_json(f"{cred.IOT_BASE_URL}/devices", _iot_headers(access_token))
+
+
+def _get_device_states(device_id: str, access_token: str) -> dict:
+    return _sync_json(
+        f"{cred.IOT_BASE_URL}/devices/{device_id}/states", _iot_headers(access_token)
+    )
+
+
+def _get_session_keys(device_id: str, access_token: str) -> dict:
+    return _sync_json(
+        f"{cred.IOT_BASE_URL}/devices/{device_id}/session_keys",
+        _iot_headers(access_token),
+        data=b"",
+        method="POST",
+    )
+
+
+def _refresh_access_token(refresh_token: str) -> dict:
+    body = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": cred.CLIENT_ID,
+        }
+    ).encode()
+    return _sync_json(
+        f"{cred.AUTH_BASE_URL}/token", cred._TOKEN_HEADERS, data=body, method="POST"
+    )
 
 
 def cmd_exchange(args: argparse.Namespace) -> None:
@@ -139,7 +185,7 @@ def cmd_exchange(args: argparse.Namespace) -> None:
     token_response = _sync_exchange_code(auth_code, state["code_verifier"])
     access_token = token_response["access_token"]
 
-    devices = cred.get_devices(access_token).get("devices", [])
+    devices = _get_devices(access_token).get("devices", [])
     if not devices:
         print("ERROR: no Sony IoT devices on this account.", file=sys.stderr)
         sys.exit(1)
@@ -149,7 +195,7 @@ def cmd_exchange(args: argparse.Namespace) -> None:
 
     idx = args.device_index if args.device_index is not None else 0
     device_id = devices[idx]["device_id"]
-    session_keys = cred.get_session_keys(device_id, access_token)
+    session_keys = _get_session_keys(device_id, access_token)
     session_keys.setdefault("device_id", device_id)
     bundle = cred.build_credentials_bundle(session_keys, token_response)
     _save(_CREDS_FILE, bundle)
@@ -221,10 +267,10 @@ def _grpc_handshake(host: str, port: int, creds: dict):
 
 def _dump_cloud_schema(creds: dict) -> dict:
     """Fetch the Sony IoT cloud state snapshot (full JSON field tree)."""
-    token = cred.refresh_access_token(creds["refresh_token"])
+    token = _refresh_access_token(creds["refresh_token"])
     access_token = token["access_token"]
     device_id = creds["device_id"]
-    states = cred.get_device_states(device_id, access_token)
+    states = _get_device_states(device_id, access_token)
     _save(_SCHEMA_DIR / "cloud_states.json", states)
     # Flatten to dotted field paths for a compact schema view.
     paths: dict[str, str] = {}

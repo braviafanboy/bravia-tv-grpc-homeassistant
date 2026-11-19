@@ -7,8 +7,44 @@ markers = ["agent_probe: let the coordinator probe for the BRAVIA agent"]
 # regardless of how pytest is launched (the `pytest` console script does not add
 # the CWD, unlike `python -m pytest`).
 pythonpath = ["."]
+# A Python-level deprecation raised from the integration's own code fails the
+# test that hit it. (Home Assistant's own "this integration uses a deprecated
+# API" log lines are caught by a fixture in tests/conftest.py.)
+filterwarnings = [
+    "error::DeprecationWarning:custom_components.bravia_tv_grpc.*",
+    "error::PendingDeprecationWarning:custom_components.bravia_tv_grpc.*",
+]
+
+[tool.mypy]
+# Run as `mypy` from the repository root, in an environment with Home
+# Assistant installed (requirements-dev.txt).
+files = ["custom_components/bravia_tv_grpc"]
+# Generated protobuf code: not checked, and untyped to its importers (below).
+exclude = ['bravia_control_pb2(_grpc)?\.py$']
+python_version = "3.14"
+ignore_missing_imports = true
+follow_imports = "silent"
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+
+# Home Assistant types its own APIs with the validation library it now ships
+# and maps `voluptuous` onto it at runtime; the standalone voluptuous package's
+# types do not line up with those. Schemas are checked by the tests instead.
+[[tool.mypy.overrides]]
+module = ["voluptuous", "voluptuous.*"]
+follow_imports = "skip"
+
+# Generated protobuf code.
+[[tool.mypy.overrides]]
+module = ["*.bravia_control_pb2", "*.bravia_control_pb2_grpc"]
+follow_imports = "skip"
 
 [tool.ruff]
+# Deliberately older than the Python Home Assistant itself needs (3.14): the
+# wire-decode modules and the tools under tools/ also run on their own, on
+# whatever Python is at hand, and a 3.14 target makes the formatter rewrite
+# `except (A, B):` into the parenthesis-free form only 3.14 can parse.
 target-version = "py312"
 line-length = 88
 extend-exclude = [

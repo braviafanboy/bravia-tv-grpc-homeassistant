@@ -11,7 +11,7 @@ IoT cloud with the same account; see ``grpc/cloud_commands.py``.
 from __future__ import annotations
 
 import logging
-import re
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
@@ -21,13 +21,10 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
-from .bravia_tv_client import (
-    BraviaTvAuthError,
-    BraviaTvConnectionError,
-    BraviaTvGrpcClient,
-)
+from .bravia_tv_client import BraviaTvConnectionError, BraviaTvGrpcClient
 from .const import (
     CONF_DEVICE_UNIQUE_ID,
     CONF_FW_PENDING,
@@ -37,23 +34,36 @@ from .const import (
     CONF_MODEL,
     CONF_MODEL_ID,
     CONF_SW_VERSION,
+    DATA_ADDRESS_HINTS,
     DOMAIN,
 )
-from .coordinator import BraviaTvCoordinator, rest_options
-from .grpc import credentials as cred
-from .grpc.credentials import GrpcCredentialsError, GrpcCredentialsRefreshError
-from .grpc_discovery import (
-    async_discover_port_mdns,
-    async_resolve_device_mdns,
-    discover_grpc_port,
+from .coordinator import (
+    BraviaTvCoordinator,
+    BraviaTvReauthRequired,
+    rest_options,
+    schema_store,
 )
+from .grpc import credentials as cred
+from .grpc.device_id import parse_instance_name
+from .grpc_discovery import async_resolve_device_mdns, async_resolve_port
 
-# Sony advertises `<friendly name>-<40-hex device_unique_id>._sonysmarthome…`.
-_DEVICE_UID_RE = re.compile(r"-([0-9a-f]{40})", re.IGNORECASE)
+# Module-level so the port lookup has one name to stub in tests.
+_resolve_port = async_resolve_port
 
 _LOGGER = logging.getLogger(__name__)
 
 _ISSUE_PORT_UNREACHABLE = "grpc_port_unreachable"
+# Repairs raised per TV, by the prefix of their id (the entry id follows).
+_ENTRY_ISSUES = (
+    f"{_ISSUE_PORT_UNREACHABLE}_",
+    "agent_permissions_",
+    "agent_outdated_",
+    "agent_contract_",
+    "agent_identity_changed_",
+    "agent_pairing_",
+    "rest_key_rejected_",
+    "rest_unavailable_",
+)
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
@@ -82,7 +92,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Bravia TV (gRPC) from a config entry."""
+    """Set up Bravia TV (gRPC) from a config entry.
+
+    The TV does not have to be on. Once it has been reached from this install
+    its capability schema is stored, and a later setup that cannot reach it
+    (standby, unplugged) loads anyway: the TV reads as off and the coordinator
+    keeps looking for it. Only a TV that has never been reached makes setup
+    wait and retry, because there is nothing yet to build its entities from.
+    """
     host = entry.data[CONF_HOST]
     creds = cred.parse_credentials_json(entry.data[CONF_GRPC_KEYS])
     device_id = entry.data.get(CONF_GRPC_DEVICE_ID) or creds.get("device_id")
@@ -93,63 +110,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _backfill_device_unique_id(hass, entry, host)
 
     manual_port = entry.options.get(CONF_GRPC_PORT) or None
-    port = await _resolve_port(hass, host, entry.data.get(CONF_GRPC_PORT), manual_port)
-    if not port:
-        # Surface an actionable repair; the user can check the TV/network or set
-        # a manual port in the integration's options.
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            _ISSUE_PORT_UNREACHABLE,
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=_ISSUE_PORT_UNREACHABLE,
-            translation_placeholders={"host": host},
-        )
-        raise ConfigEntryNotReady(f"Could not locate gRPC service on {host}")
-    ir.async_delete_issue(hass, DOMAIN, _ISSUE_PORT_UNREACHABLE)
-    # Persist the resolved port so the next start is instant.
-    if port != entry.data.get(CONF_GRPC_PORT):
-        hass.config_entries.async_update_entry(
-            entry, data={**entry.data, CONF_GRPC_PORT: port}
-        )
-
+    client = BraviaTvGrpcClient(
+        host,
+        entry.data.get(CONF_GRPC_PORT) or 0,
+        device_id or "",
+        creds.get("hmac_key") or "",
+        key_id=creds.get("key_id"),
+        session_key=creds.get("session_key"),
+    )
+    coordinator = BraviaTvCoordinator(hass, entry, client)
+    has_schema = await coordinator.async_load_cache()
+    # An address mDNS announced for this TV while its setup was failing.
+    hint = hass.data.get(DATA_ADDRESS_HINTS, {}).pop(entry.entry_id, None)
+    issue_id = f"{_ISSUE_PORT_UNREACHABLE}_{entry.entry_id}"
     try:
-        coordinator = await _connect(hass, entry, host, port, creds, device_id)
-    except BraviaTvAuthError as err:
-        # A TV reboot invalidates the Sony session keys (and changes the port,
-        # already handled above). Refresh the keys via the cloud and retry once.
-        _LOGGER.info("gRPC auth failed (%s); refreshing Sony session keys", err)
-        try:
-            creds = await _refresh_credentials(hass, entry, creds, device_id)
-        except Exception as err2:  # noqa: BLE001
-            if _needs_reauth(err2):
-                # The refresh token itself is no longer usable — only the user
-                # can recover, by re-logging in. Trigger the reauth flow.
-                raise ConfigEntryAuthFailed(
-                    f"Sony credentials rejected, re-authentication required: {err2}"
-                ) from err2
-            # A transient cloud/network error (e.g. a reset connection while the
-            # TV is still booting). Let HA retry with backoff — do NOT force the
-            # user through a re-login for a temporary blip.
-            raise ConfigEntryNotReady(
-                f"Sony key refresh temporarily failed: {err2}"
-            ) from err2
-        try:
-            coordinator = await _connect(hass, entry, host, port, creds, device_id)
-        except (BraviaTvAuthError, BraviaTvConnectionError) as err2:
-            # Fresh, valid cloud keys were still rejected by the TV — it is
-            # almost certainly still settling after a reboot. Re-authentication
-            # would only yield equivalent keys, so retry rather than prompt.
-            raise ConfigEntryNotReady(
-                f"TV rejected refreshed credentials, will retry: {err2}"
-            ) from err2
+        await _async_start(hass, entry, coordinator, manual_port, hint)
+    except BraviaTvReauthRequired as err:
+        # The refresh token itself is no longer usable — only the user can
+        # recover, by re-logging in. Trigger the reauth flow.
+        raise ConfigEntryAuthFailed(
+            f"Sony credentials rejected, re-authentication required: {err}"
+        ) from err
     except BraviaTvConnectionError as err:
-        raise ConfigEntryNotReady(str(err)) from err
+        if not has_schema:
+            # Never reached from this install: surface an actionable repair
+            # (check the TV and network, or set the port in the options) and
+            # let Home Assistant retry.
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=_ISSUE_PORT_UNREACHABLE,
+                translation_placeholders={"host": host},
+            )
+            raise ConfigEntryNotReady(str(err)) from err
+        _LOGGER.info("%s is unreachable (%s); starting without it", entry.title, err)
+        await coordinator.async_start_offline()
+    ir.async_delete_issue(hass, DOMAIN, issue_id)
+    # The id this repair had before it was raised per TV.
+    ir.async_delete_issue(hass, DOMAIN, _ISSUE_PORT_UNREACHABLE)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     coordinator.applied_manual_port = manual_port
-    await _ensure_device_info(hass, entry, creds, device_id, coordinator)
+    # The keys may just have been renewed: read the credentials back.
+    creds = cred.parse_credentials_json(entry.data[CONF_GRPC_KEYS])
+    await _ensure_device_info(hass, entry, creds, device_id or "", coordinator)
     _remove_other_picture_entities(hass, entry, coordinator.rest_writable)
     _remove_retired_entities(hass, entry)
     if not coordinator.agent_update_checks:
@@ -159,6 +166,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.agent_entities_created = coordinator.agent_expected
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+async def _async_start(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: BraviaTvCoordinator,
+    manual_port: int | None,
+    hint: tuple[str, int] | None,
+) -> None:
+    """Find the TV and start the coordinator connected to it.
+
+    Raises BraviaTvConnectionError when it cannot be reached right now, with
+    nothing started."""
+    client = coordinator.client
+    host = entry.data[CONF_HOST]
+    if hint is not None and hint[0] != host:
+        # mDNS says the TV moved. Believe it only if that address proves to be
+        # the TV; the stored address is not touched otherwise.
+        client.host, client.port = hint
+        try:
+            # Stores the address itself once it has proved to be the TV.
+            await coordinator.async_start(verify=True)
+        except BraviaTvConnectionError as err:
+            _LOGGER.debug("announced address %s:%s not used: %s", *hint, err)
+            hint = None
+        else:
+            return
+    port = await _resolve_port(
+        hass,
+        host,
+        entry.data.get(CONF_GRPC_PORT),
+        manual_port,
+        hint=hint[1] if hint is not None else None,
+        scan_key=entry.entry_id,
+    )
+    if not port:
+        raise BraviaTvConnectionError(f"Could not locate gRPC service on {host}")
+    client.host, client.port = host, port
+    # Stores the resolved port, so the next start is instant.
+    await coordinator.async_start()
 
 
 async def _backfill_device_unique_id(
@@ -177,11 +224,10 @@ async def _backfill_device_unique_id(
     if not resolved:
         return
     _, name, _ = resolved
-    match = _DEVICE_UID_RE.search(name or "")
-    if match:
+    _, device_unique_id = parse_instance_name(name)
+    if device_unique_id:
         hass.config_entries.async_update_entry(
-            entry,
-            data={**entry.data, CONF_DEVICE_UNIQUE_ID: match.group(1).lower()},
+            entry, data={**entry.data, CONF_DEVICE_UNIQUE_ID: device_unique_id}
         )
 
 
@@ -212,7 +258,7 @@ async def _ensure_device_info(
     hardware = await _fetch_device_hardware(hass, creds, device_id)
     if hardware is None:
         return
-    updates = {
+    updates: dict[str, Any] = {
         key: hardware[field]
         for key, field in (
             (CONF_MODEL, "model"),
@@ -240,10 +286,9 @@ async def _fetch_device_hardware(
     except Exception:  # noqa: BLE001
         _LOGGER.debug("device-info fetch failed", exc_info=True)
         return None
-    device = next(
-        (d for d in devices if d.get("device_id") == device_id),
-        devices[0] if devices else None,
-    )
+    # Only this TV's own entry: the account may hold other devices (a
+    # soundbar), whose model and firmware must not end up on the TV.
+    device = next((d for d in devices if d.get("device_id") == device_id), None)
     return cred.device_hardware_info(device) if device else None
 
 
@@ -331,108 +376,27 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
         await coordinator.async_check_agent_update()
 
 
-async def _connect(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    host: str,
-    port: int,
-    creds: dict,
-    device_id: str,
-) -> BraviaTvCoordinator:
-    """Build a client + coordinator and start it (connect, seed, push)."""
-    client = BraviaTvGrpcClient(
-        host,
-        port,
-        device_id,
-        creds["hmac_key"],
-        key_id=creds.get("key_id"),
-        session_key=creds.get("session_key"),
-    )
-    coordinator = BraviaTvCoordinator(hass, entry, client)
-    await coordinator.async_start()
-    return coordinator
-
-
-def _needs_reauth(err: Exception) -> bool:
-    """Whether a key-refresh failure means the user must re-authenticate.
-
-    Only a Sony cloud rejection of the refresh token (or a missing token) is
-    unrecoverable without the user; network resets, 5xx and TV-side handshake
-    errors are transient and should be retried instead.
-    """
-    if isinstance(err, GrpcCredentialsError):
-        return True
-    if isinstance(err, GrpcCredentialsRefreshError):
-        return err.status in (400, 401, 403)
-    return False
-
-
-async def _refresh_credentials(
-    hass: HomeAssistant, entry: ConfigEntry, creds: dict, device_id: str
-) -> dict:
-    """Fetch fresh Sony session keys and persist them to the config entry."""
-    session = async_get_clientsession(hass)
-    new_creds = await cred.async_refresh_credentials(session, creds, device_id)
-    hass.config_entries.async_update_entry(
-        entry,
-        data={**entry.data, CONF_GRPC_KEYS: cred.credentials_to_json(new_creds)},
-    )
-    return new_creds
-
-
-async def _resolve_port(
-    hass: HomeAssistant, host: str, cached: int | None, manual: int | None = None
-) -> int | None:
-    """Locate the dynamic gRPC port: manual -> cached -> mDNS -> full scan."""
-    # 0. Manual override from options — try it first (escape hatch for networks
-    #    where discovery is blocked). If it no longer serves (TV rebooted onto a
-    #    new port), fall through to normal discovery rather than failing.
-    if manual and await hass.async_add_executor_job(_port_serves_grpc, host, manual):
-        return manual
-    # 1. Cached port from a previous run — instant when the TV hasn't rebooted.
-    if cached and await hass.async_add_executor_job(_port_serves_grpc, host, cached):
-        return cached
-    # 2. mDNS (_sonysmarthome._tcp) — fast, handles a changed port after reboot.
-    #    Best-effort: any zeroconf hiccup must fall through to the scan, never
-    #    fail setup.
-    try:
-        port = await async_discover_port_mdns(hass, host)
-    except Exception:  # noqa: BLE001
-        _LOGGER.debug("mDNS port discovery failed; falling back to scan", exc_info=True)
-        port = None
-    if port and await hass.async_add_executor_job(_port_serves_grpc, host, port):
-        return port
-    # 3. TCP scan — last resort. The TV's dynamic port has only ever been seen
-    #    in the Linux ephemeral range, so scan that first (about half the ports,
-    #    so half the time); fall back to the full range if it isn't found.
-    candidates: tuple[int, ...] = (cached,) if cached else ()
-    port = await hass.async_add_executor_job(
-        discover_grpc_port, host, candidates, range(32768, 61000)
-    )
-    if port:
-        return port
-    return await hass.async_add_executor_job(
-        discover_grpc_port, host, candidates, range(1024, 65536)
-    )
-
-
-def _port_serves_grpc(host: str, port: int) -> bool:
-    from .grpc_discovery import is_control_device_service
-
-    return is_control_device_service(host, port)
-
-
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: BraviaTvCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.async_shutdown()
+        coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if coordinator is not None:
+            await coordinator.async_shutdown()
     return unloaded
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """The TV was removed: drop the dashboard display user with the last TV."""
+    """The TV was removed: clear what was kept for it, and drop the dashboard
+    display users with the last TV."""
+    from .dashboard import async_close_session
+
+    for prefix in _ENTRY_ISSUES:
+        ir.async_delete_issue(hass, DOMAIN, f"{prefix}{entry.entry_id}")
+    hass.data.get(DATA_ADDRESS_HINTS, {}).pop(entry.entry_id, None)
+    store: Store = schema_store(hass, entry.entry_id)
+    await store.async_remove()
+    await async_close_session(hass, entry.entry_id)
     others = [
         e
         for e in hass.config_entries.async_entries(DOMAIN)
