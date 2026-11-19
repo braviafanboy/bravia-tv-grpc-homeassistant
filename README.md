@@ -252,8 +252,10 @@ separate picture values for HDR and Dolby Vision).
 - **Ambient brightness** (switch) — turns it on and off for the picture mode
   the TV is in, and shows that mode's setting. Each picture mode remembers its
   own: change to a mode where it is off and the brightness is left alone,
-  change back and it carries on. (With an agent before 0.10.0 it is one switch
-  for the whole TV.)
+  change back and it carries on. Switching it on starts from the brightness
+  the mode has at that moment, and switching it off gives that brightness
+  back, unless you have changed it by hand since. (With an agent before
+  0.10.0 it is one switch for the whole TV.)
 - **Ambient brightness learning** (switch) — chooses how a *manual* brightness
   change is treated. With learning **off**, changing Brightness by hand switches
   ambient brightness off until you turn it back on. With learning **on**, it
@@ -263,7 +265,7 @@ separate picture values for HDR and Dolby Vision).
   current picture mode's curve; they show and edit whichever mode is active.
 - **Reset ambient brightness curve** (button) — drops the current mode's own
   curve, back to what the mode started from: a curve that reaches the
-  brightness the mode had when ambient brightness first ran in it.
+  brightness the mode had when ambient brightness was last switched on in it.
 - **Ambient brightness status** (sensor) — off, active, paused or not
   available, with the reason and the curves as attributes.
 
