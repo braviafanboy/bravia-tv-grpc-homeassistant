@@ -201,6 +201,9 @@ _KEY_RENEWAL_RETRY = timedelta(minutes=10)
 # took about two seconds), so the first handshake with new keys is given this
 # many tries, this far apart, before it counts as refused.
 _NEW_KEY_ATTEMPTS = 5
+# While the agent reports a permission as missing, how often its news may
+# prompt another look at /v1/info.
+_AGENT_PERMISSION_RECHECK = 20
 _NEW_KEY_WAIT = 1.5
 _KEY_RENEWAL_FALLBACK = timedelta(hours=12)
 # While reconnecting, fetch fresh keys for a TV that rejects ours at most
@@ -380,6 +383,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # The certificate last reported in the "agent identity changed" repair.
         self._agent_identity_reported: str | None = None
         self._agent_pairing_reported = False
+        self._agent_permissions_checked = 0.0
         self._agent_pair_task: asyncio.Task | None = None
         self._agent_pair_outcome: str | None = None
         # Answers the agent's token_needed while a dashboard is showing: only
@@ -1036,6 +1040,25 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         else:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    @callback
+    def _maybe_recheck_agent_permissions(self) -> None:
+        """Look at /v1/info again when the agent sends news while one of its
+        permissions is reported missing.
+
+        A grant on the TV shows in the agent's state (the reader that needed
+        it starts), but /v1/info is otherwise read only when the link
+        connects, so the repair would outlive the grant until the next
+        reconnect."""
+        if self.agent is None or not agentmod.missing_permissions(self.agent_info):
+            return
+        now = time.monotonic()
+        if now - self._agent_permissions_checked < _AGENT_PERMISSION_RECHECK:
+            return
+        self._agent_permissions_checked = now
+        self._entry.async_create_background_task(
+            self.hass, self.async_agent_refresh_info(), name="bravia_tv_agent_info"
+        )
 
     async def async_agent_refresh_info(self) -> None:
         """Re-read /v1/info (permissions, pairing) and update the repair."""
@@ -2278,6 +2301,7 @@ class BraviaTvCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state[agent_path("updated_at")] = dt_util.utcnow()
         self._state[AGENT_ONLINE] = True
         self._agent_document_event.set()
+        self._maybe_recheck_agent_permissions()
         self._update_rest_issues()
         self._maybe_send_dashboard_token()
         self.async_set_updated_data(dict(self._state))

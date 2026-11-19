@@ -879,6 +879,40 @@ async def test_missing_permission_raises_repair_and_clears_when_granted(
     await coordinator.async_shutdown()
 
 
+async def test_a_grant_on_the_tv_clears_the_repair_without_a_reconnect(
+    hass: HomeAssistant,
+):
+    """Granting a permission on the TV changes the agent's state, not the
+    link: the repair must go when the agent's next news arrives, not at the
+    next reconnect (found on a TV: the repair outlived the grant)."""
+    from homeassistant.helpers import issue_registry as ir
+
+    entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
+    fakes: list[FakeAgent] = []
+
+    def configure(f):
+        f.info = {**_INFO, "permissions": {"bluetooth_connect": False}}
+
+    with patch(f"{COORD}._AGENT_PERMISSION_RECHECK", 0):
+        coordinator = await _start(hass, entry, fakes, configure=configure)
+        fake = fakes[0]
+        await asyncio.wait_for(fake.stream_started.wait(), 5)
+        registry = ir.async_get(hass)
+        issue_id = f"agent_permissions_{entry.entry_id}"
+        await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is not None)
+        # The user grants it on the TV; the agent's state follows.
+        fake.info = {**_INFO, "permissions": {"bluetooth_connect": True}}
+        fake.events.put_nowait(("state", dict(_DOC)))
+        await _until(lambda: registry.async_get_issue(DOMAIN, issue_id) is None)
+        # With nothing missing, news from the agent prompts no further reads.
+        reads = len([c for c, _ in fake.requests if c == "info"])
+        fake.events.put_nowait(("state", dict(_DOC)))
+        for _ in range(20):
+            await _real_sleep(0)
+        assert len([c for c, _ in fake.requests if c == "info"]) == reads
+    await coordinator.async_shutdown()
+
+
 async def test_agent_setup_prefers_cloud_deep_link(hass: HomeAssistant):
     entry = _entry(hass, **{CONF_AGENT_TOKEN: "tok"})
     fakes: list[FakeAgent] = []
