@@ -9,16 +9,17 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      # These are pinned by pytest-homeassistant-custom-component (i.e. by the
-      # Home Assistant release under test), so raising our floor can only make
-      # the install unresolvable. protobuf's floor is also the manifest's
-      # minimum (matches the generated pb2 code); change it by hand with that.
+      # These floors are the oldest versions the integration works with, and
+      # the Home Assistant release under test decides the versions actually
+      # installed (its package constraints; see the tests job). Raising a
+      # floor can only make an install on an older Home Assistant
+      # unresolvable. protobuf's and grpcio's floors are also the manifest's
+      # minimums (they match the generated pb2 code); change them by hand
+      # with that.
       - dependency-name: aiohttp
       - dependency-name: cryptography
       - dependency-name: protobuf
       - dependency-name: pytest
-      # grpcio's floor is the manifest minimum and must stay installable
-      # against HA's pinned grpcio. grpcio-tools sets the generated code's
-      # minimum versions (see requirements-dev.txt).
       - dependency-name: grpcio
+      # Sets the generated code's minimum versions (requirements-proto.txt).
       - dependency-name: grpcio-tools

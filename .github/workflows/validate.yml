@@ -8,38 +8,81 @@ on:
     - cron: "0 0 * * 0"
   workflow_dispatch:
 
+# Nothing here writes to the repository or needs a secret.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push replaces a run that is still going. Not on main: the author
+  # check covers the commits of one push, so a run cancelled there would
+  # leave that push's commits unchecked.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   authors:
     name: Commit authors use a GitHub no-reply address
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Check every commit in the push
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -eu
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            RANGE="origin/${{ github.base_ref }}..HEAD"
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          zero=0000000000000000000000000000000000000000
+          range=""
+          if [ "$EVENT" = "pull_request" ]; then
+            range="origin/$BASE_REF..HEAD"
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$zero" ]; then
+            range="$BEFORE..$HEAD_SHA"
+          fi
+          # No range (a new branch, a scheduled or manual run), or one that
+          # cannot be read (a force-push removed its start), must not pass as
+          # "nothing to check", and the last few commits are not all of a new
+          # branch: check the whole history then.
+          format='%h%x09%an%x09%ae%x09%cn%x09%ce'
+          if [ -n "$range" ] && git rev-list "$range" >/dev/null 2>&1; then
+            commits=$(git log --format="$format" "$range")
           else
-            RANGE="HEAD~20..HEAD"
+            commits=$(git log --format="$format" HEAD)
           fi
-          # GitHub itself commits Dependabot PRs merged on github.com
-          # (committer noreply@github.com); that is not a personal identity.
-          bad=$(git log --format='%h %ae %ce' "$RANGE" 2>/dev/null | awk '$2 !~ /@users\.noreply\.github\.com$/ || ($3 !~ /@users\.noreply\.github\.com$/ && $3 != "noreply@github.com")' || true)
+          # Fields: hash, author name, author email, committer name, committer
+          # email. The addresses must be GitHub no-reply ones; GitHub itself
+          # commits merges made on github.com (noreply@github.com), which is
+          # not a personal identity. The project's own address must carry the
+          # project's name, so a real name cannot ride along with it.
+          bad=$(printf '%s\n' "$commits" | awk -F'\t' '
+            NF == 0 { next }
+            $3 !~ /@users\.noreply\.github\.com$/ { print $1 " author address"; next }
+            $5 !~ /@users\.noreply\.github\.com$/ && $5 != "noreply@github.com" { print $1 " committer address"; next }
+            $3 ~ /(^|\+)braviafanboy@users\.noreply\.github\.com$/ && $2 != "braviafanboy" { print $1 " author name"; next }
+            $5 ~ /(^|\+)braviafanboy@users\.noreply\.github\.com$/ && $4 != "braviafanboy" { print $1 " committer name"; next }
+          ')
           if [ -n "$bad" ]; then
-            echo "Commits with a personal identity (use the project no-reply address):"; echo "$bad"; exit 1
+            # Only the commit and the field: this log is public too.
+            echo "Commits with a personal identity (use the project no-reply address and name):"
+            printf '%s\n' "$bad"
+            exit 1
           fi
-          echo "ok"
+          echo "ok: $(printf '%s\n' "$commits" | grep -c .) commit(s) checked"
 
   lint:
     name: Ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
@@ -53,18 +96,27 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
 
+  # These two follow a branch on purpose: neither project publishes releases
+  # to pin to (so Dependabot could never move a pin), and both are the form
+  # their own documentation prescribes. They only read the checkout.
   hassfest:
     name: Hassfest
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: home-assistant/actions/hassfest@master
 
   hacs:
     name: HACS
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: hacs/action@main
         with:
           category: integration
@@ -72,6 +124,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.ha }} HA)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -81,11 +134,15 @@ jobs:
           # package (it pins HA 2026.3.1). Raise this with hacs.json.
           - ha: minimum
             pin: pytest-homeassistant-custom-component==0.13.317
+          # The newest HA that has a test package. That trails the newest
+          # release by a few weeks; the "newest-ha" job below covers the gap.
           - ha: latest
             pin: ""
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
@@ -94,4 +151,42 @@ jobs:
       # step with manifest.json) plus pytest-homeassistant-custom-component,
       # which pulls HA for the config-flow/coordinator tests.
       - run: pip install -r requirements-dev.txt ${{ matrix.pin }}
-      - run: pytest tests/ -q
+      # Home Assistant installs an integration's requirements under its own
+      # package constraints. Test with the grpcio and protobuf a real install
+      # of this HA version gets, not with whatever is newest on PyPI.
+      - name: Use the library versions this Home Assistant installs
+        run: |
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).with_name("package_constraints.txt"))')"
+          python -c 'import json; print("\n".join(json.load(open("custom_components/bravia_tv_grpc/manifest.json"))["requirements"]))' > "$RUNNER_TEMP/requirements-manifest.txt"
+          pip install -c "$constraints" -r "$RUNNER_TEMP/requirements-manifest.txt"
+          pip list | grep -i -E '^(homeassistant|grpcio|protobuf|aiohttp) '
+      - run: >
+          pytest tests/ -q --timeout=300
+          --cov=custom_components/bravia_tv_grpc --cov-branch --cov-fail-under=70
+      - name: Type check
+        if: matrix.ha == 'latest'
+        run: mypy
+
+  # The test package trails Home Assistant's newest release, so the suite
+  # cannot run there yet. Importing every module of the integration on it
+  # still catches an API that was removed, weeks before the tests could.
+  newest-ha:
+    name: Imports on the newest Home Assistant
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - run: pip install homeassistant
+      - name: Install the requirements as this Home Assistant would
+        run: |
+          constraints="$(python -c 'import homeassistant, pathlib; print(pathlib.Path(homeassistant.__file__).with_name("package_constraints.txt"))')"
+          python -c 'import json; print("\n".join(json.load(open("custom_components/bravia_tv_grpc/manifest.json"))["requirements"]))' > "$RUNNER_TEMP/requirements-manifest.txt"
+          pip install -c "$constraints" -r "$RUNNER_TEMP/requirements-manifest.txt"
+          pip list | grep -i -E '^(homeassistant|grpcio|protobuf|aiohttp) '
+      - name: Import every module
+        run: python tools/import_smoke.py
